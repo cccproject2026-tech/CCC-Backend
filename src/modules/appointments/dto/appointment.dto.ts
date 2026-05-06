@@ -7,6 +7,10 @@ export class CreateAppointmentDto {
     @IsNotEmpty()
     userId: string;
 
+    @IsOptional()
+    @IsMongoId()
+    assessmentAssignmentId?: string;
+
     @IsMongoId()
     @IsNotEmpty()
     mentorId: string;

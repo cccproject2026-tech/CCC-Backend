@@ -13,6 +13,7 @@ import { ROLES, isHostRole } from 'src/common/constants/roles.constants';
 import { ZoomService } from '../zoom/zoom.service';
 import { MailerService } from '../../common/utils/mail.util';
 import { TranscriptSummaryService } from './transcript-summary.service';
+import { AssessmentAssigned, AssessmentAssignedDocument } from '../assessment/schemas/assessment_assigned';
 
 @Injectable()
 export class AppointmentsService {
@@ -21,6 +22,7 @@ export class AppointmentsService {
     constructor(
         @InjectModel(Appointment.name) private appointmentModel: Model<AppointmentDocument>,
         @InjectModel(Availability.name) private availabilityModel: Model<AvailabilityDocument>,
+        @InjectModel(AssessmentAssigned.name) private assessmentAssignedModel: Model<AssessmentAssignedDocument>,
         private readonly notificationService: HomeService,
         private readonly zoomService: ZoomService,
         private readonly mailerService: MailerService,
@@ -96,6 +98,33 @@ export class AppointmentsService {
 
     async create(dto: CreateAppointmentDto): Promise<AppointmentResponseDto> {
         const mentorId = new Types.ObjectId(dto.mentorId);
+
+        let linkedAssessmentAssignmentId: Types.ObjectId | null = null;
+
+        if (dto.assessmentAssignmentId) {
+            if (!Types.ObjectId.isValid(dto.assessmentAssignmentId)) {
+                throw new BadRequestException('Invalid assessment assignment ID format.');
+            }
+
+            linkedAssessmentAssignmentId = new Types.ObjectId(dto.assessmentAssignmentId);
+
+            const assignment = await this.assessmentAssignedModel
+                .findById(linkedAssessmentAssignmentId)
+                .select('_id userId appointmentId')
+                .lean();
+
+            if (!assignment) {
+                throw new NotFoundException('Assessment assignment not found.');
+            }
+
+            if (assignment.userId.toString() !== dto.userId) {
+                throw new BadRequestException('Assessment assignment does not belong to the provided user.');
+            }
+
+            if (assignment.appointmentId) {
+                throw new BadRequestException('This assessment is already linked to an appointment.');
+            }
+        }
 
         const isHostInitiated = dto.initiatorRole ? isHostRole(dto.initiatorRole) : false;
 
@@ -341,6 +370,13 @@ export class AppointmentsService {
         });
 
         const saved = await appointment.save();
+
+        if (linkedAssessmentAssignmentId) {
+            await this.assessmentAssignedModel.updateOne(
+                { _id: linkedAssessmentAssignmentId },
+                { $set: { appointmentId: saved._id } }
+            );
+        }
 
         const populated = await this.populateBase(
             this.appointmentModel.findById(saved._id)

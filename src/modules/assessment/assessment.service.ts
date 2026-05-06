@@ -192,7 +192,18 @@ export class AssessmentService {
         path: 'answerId'
       })
       .populate({
-        path: 'appointmentId'
+        path: 'appointmentId',
+        select: 'meetingDate endTime platform meetingLink status notes zoomMeeting zoomMeetingId userId mentorId',
+        populate: [
+          {
+            path: 'userId',
+            select: 'firstName lastName email phoneNumber profilePicture role roleId status',
+          },
+          {
+            path: 'mentorId',
+            select: 'firstName lastName email phoneNumber profilePicture role roleId status',
+          },
+        ],
       })
       .sort({ createdAt: -1 })
       .lean()
