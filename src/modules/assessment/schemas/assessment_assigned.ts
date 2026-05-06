@@ -17,7 +17,7 @@ export class AssessmentAssigned {
 
     @Prop({
         type: String,
-        enum: ['assigned', 'in_progress', 'submitted', 'reviewed'],
+        enum: ['assigned', 'in_progress', 'in-progress', 'submitted', 'reviewed', 'completed'],
         default: 'assigned'
     })
     status: string;

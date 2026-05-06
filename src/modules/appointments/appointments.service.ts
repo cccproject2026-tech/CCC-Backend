@@ -4,7 +4,7 @@ import { Model, Types } from 'mongoose';
 import { Appointment, AppointmentDocument } from './schemas/appointment.schema';
 import { CreateAppointmentDto, AppointmentResponseDto, TranscriptSummaryResponseDto, UpdateAppointmentDto } from './dto/appointment.dto';
 import { toAppointmentResponseDto } from './utils/appointment.mapper';
-import { APPOINTMENT_STATUSES, APPOINTMENT_PLATFORMS } from '../../common/constants/status.constants';
+import { APPOINTMENT_STATUSES, APPOINTMENT_PLATFORMS, ASSESSMENT_ASSIGNMENT_STATUSES } from '../../common/constants/status.constants';
 import { Availability, AvailabilityDocument } from './schemas/availability.schema';
 import { AvailabilityDto, DeleteAvailabilitySlotDto } from './dto/availability.dto';
 import { buildSlotDate, convertSlotToMinutes, generateMonthlyAvailability, getWeekRange, HourSlot, splitIntoDurationSlots } from './utils/availability.utils';
@@ -94,6 +94,18 @@ export class AppointmentsService {
         end.setHours(endHour, endMinutes, 0, 0);
 
         return { start, end };
+    }
+
+    private async markLinkedAssessmentCompleted(appointmentId: Types.ObjectId): Promise<void> {
+        await this.assessmentAssignedModel.updateMany(
+            { appointmentId },
+            {
+                $set: {
+                    status: ASSESSMENT_ASSIGNMENT_STATUSES.COMPLETED,
+                    submittedAt: new Date(),
+                },
+            }
+        );
     }
 
     async create(dto: CreateAppointmentDto): Promise<AppointmentResponseDto> {
@@ -301,6 +313,7 @@ export class AppointmentsService {
 
         const userName = userDoc ? `${userDoc.firstName || ''} ${userDoc.lastName || ''}`.trim() : 'Student';
         const mentorName = mentorDoc ? `${mentorDoc.firstName || ''} ${mentorDoc.lastName || ''}`.trim() : 'Mentor';
+        const normalizedNotes = linkedAssessmentAssignmentId ? 'Assessment meeting' : dto.notes;
 
         let zoomMeeting: any = null;
         let meetingLink = dto.meetingLink || null;
@@ -327,7 +340,7 @@ export class AppointmentsService {
                     startTime: finalStartDate.toISOString(),
                     duration: durationMinutes,
                     timezone: 'Asia/Kolkata',
-                    agenda: dto.notes || `Scheduled mentoring session between ${userName} and ${mentorName}`,
+                    agenda: normalizedNotes || `Scheduled mentoring session between ${userName} and ${mentorName}`,
                     hostUserId: mentorZoomUserId,
                 });
 
@@ -359,6 +372,7 @@ export class AppointmentsService {
 
         const appointment = new this.appointmentModel({
             ...appointmentFields,
+            notes: normalizedNotes,
             meetingDate: finalStartDate,
             endTime: new Date(finalStartDate.getTime() + durationMinutes * 60000),
             userId: new Types.ObjectId(dto.userId),
@@ -636,6 +650,10 @@ export class AppointmentsService {
 
         if (!populated) {
             throw new NotFoundException(`Appointment with ID "${id}" not found.`);
+        }
+
+        if (dto.status === APPOINTMENT_STATUSES.COMPLETED) {
+            await this.markLinkedAssessmentCompleted(new Types.ObjectId(id));
         }
 
         try {
