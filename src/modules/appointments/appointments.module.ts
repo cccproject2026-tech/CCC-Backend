@@ -10,6 +10,7 @@ import { HomeModule } from '../home/home.module';
 import { ZoomModule } from '../zoom/zoom.module';
 import { MailerService } from '../../common/utils/mail.util';
 import { TranscriptSummaryService } from './transcript-summary.service';
+import { AppointmentsCronService } from './appointments.cron';
 
 @Module({
     imports: [
@@ -23,7 +24,7 @@ import { TranscriptSummaryService } from './transcript-summary.service';
         ConfigModule,
     ],
     controllers: [AppointmentsController],
-    providers: [AppointmentsService, MailerService, TranscriptSummaryService],
+    providers: [AppointmentsService, MailerService, TranscriptSummaryService, AppointmentsCronService],
     exports: [AppointmentsService],
 })
 export class AppointmentsModule { }

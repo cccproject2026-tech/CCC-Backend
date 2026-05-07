@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+import { ScheduleModule } from '@nestjs/schedule';
 
 import configuration from './config/configuration';
 import { DatabaseModule } from './database/database.module';
@@ -31,6 +32,8 @@ import { FirebaseModule } from './modules/firebase/firebase.module';
       cache: true,
       expandVariables: true,
     }),
+
+    ScheduleModule.forRoot(),
 
     ThrottlerModule.forRoot([
       // {

@@ -152,5 +152,8 @@ AppointmentSchema.index({ mentorId: 1, meetingDate: 1 });
 AppointmentSchema.index({ status: 1, mentorId: 1 });
 AppointmentSchema.index({ status: 1, userId: 1 });
 AppointmentSchema.index({ status: 1, meetingDate: -1 });
+// Helps the cron query:
+// updateMany({ status: scheduled, endTime: { $lt: now } })
+AppointmentSchema.index({ status: 1, endTime: 1 });
 AppointmentSchema.index({ platform: 'text', status: 'text', notes: 'text' });
 AppointmentSchema.index({ zoomMeetingId: 1 });
