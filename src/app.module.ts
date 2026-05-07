@@ -44,7 +44,7 @@ import { FirebaseModule } from './modules/firebase/firebase.module';
       {
         name: 'medium',
         ttl: 60000,
-        limit: 100,
+        limit: 300,
       },
       // {
       //   name: 'long',
