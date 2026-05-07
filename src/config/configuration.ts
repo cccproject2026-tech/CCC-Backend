@@ -7,8 +7,15 @@ export default () => ({
     jwtExpiresIn: process.env.JWT_EXPIRES_IN || '15m',
     refreshTokenExpiresIn: process.env.REFRESH_TOKEN_EXPIRES_IN || '7d',
     allowedOrigins: process.env.ALLOWED_ORIGINS
-        ? process.env.ALLOWED_ORIGINS.split(',')
-        : ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:5173'],
+        ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim()).filter(Boolean)
+        : [
+            'http://localhost:3000',
+            'http://localhost:3001',
+            'http://localhost:5173',
+            'https://app.wisdomtooth.tech',
+            'https://www.wisdomtooth.tech',
+            'https://wisdomtooth.tech',
+          ],
 
     superAdmin: {
         email: process.env.SUPER_ADMIN_EMAIL,
