@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsNumber, IsDate, IsOptional } from 'class-validator';
+import { IsString, IsNotEmpty, IsNumber, IsDate, IsOptional, IsMongoId } from 'class-validator';
 
 export class UploadDocumentDto {
     @IsString()
@@ -22,6 +22,10 @@ export class UploadDocumentDto {
 }
 
 export class UserDocumentResponseDto {
+    @IsMongoId()
+    @IsOptional()
+    docId?: string;
+
     @IsString()
     fileName: string;
 
@@ -36,4 +40,9 @@ export class UserDocumentResponseDto {
 
     @IsDate()
     uploadedAt: Date;
+}
+
+export class DeleteDocumentDto {
+    @IsMongoId()
+    docId: string;
 }

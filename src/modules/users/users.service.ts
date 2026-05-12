@@ -26,6 +26,11 @@ import { ROLES } from '../../common/constants/roles.constants';
 import { nanoid } from 'nanoid';
 import { HomeService } from '../home/home.service';
 
+/** Mongoose assigns `_id` on each `uploadedDocuments` subdocument; it is not on the User class fields type. */
+type UploadedDocumentSubdoc = User['uploadedDocuments'][number] & {
+    _id: Types.ObjectId;
+};
+
 @Injectable()
 export class UsersService {
     constructor(
@@ -448,13 +453,23 @@ export class UsersService {
             uploadedAt: new Date(),
         };
 
-        await this.userModel.findByIdAndUpdate(
+        const updated = await this.userModel.findByIdAndUpdate(
             userId,
             { $push: { uploadedDocuments: documentData } },
             { new: true }
-        );
+        ).select('uploadedDocuments');
 
-        return documentData;
+        const last = updated?.uploadedDocuments?.at(-1) as
+            | UploadedDocumentSubdoc
+            | undefined;
+        if (!last?._id) {
+            throw new NotFoundException('User not found');
+        }
+
+        return {
+            docId: last._id.toString(),
+            ...documentData,
+        };
     }
 
     async getDocuments(userId: string): Promise<UserDocumentResponseDto[]> {
@@ -468,17 +483,28 @@ export class UsersService {
             throw new NotFoundException('User not found');
         }
 
-        return user.uploadedDocuments || [];
+        return (user.uploadedDocuments || []).map((doc) => {
+            const d = doc as UploadedDocumentSubdoc;
+            return {
+                docId: d._id.toString(),
+                fileName: d.fileName,
+                fileUrl: d.fileUrl,
+                fileType: d.fileType,
+                fileSize: d.fileSize,
+                uploadedAt: d.uploadedAt,
+            };
+        });
     }
 
-    async deleteDocument(userId: string, documentUrl: string): Promise<void> {
+    async deleteDocument(userId: string, docId: string): Promise<void> {
         const user = await this.userModel.findById(userId).select('uploadedDocuments');
         if (!user) {
             throw new NotFoundException('User not found');
         }
 
         const documentExists = user.uploadedDocuments?.some(
-            doc => doc.fileUrl === documentUrl
+            (doc) =>
+                (doc as UploadedDocumentSubdoc)._id.toString() === docId,
         );
 
         if (!documentExists) {
@@ -487,8 +513,12 @@ export class UsersService {
 
         await this.userModel.findByIdAndUpdate(
             userId,
-            { $pull: { uploadedDocuments: { fileUrl: documentUrl } } },
-            { new: true }
+            {
+                $pull: {
+                    uploadedDocuments: { _id: new Types.ObjectId(docId) },
+                },
+            },
+            { new: true },
         );
     }
 

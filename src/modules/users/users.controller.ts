@@ -26,7 +26,7 @@ import {
 // import { ROLES } from 'src/common/constants/roles.constants';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { UploadedFile, UseInterceptors } from '@nestjs/common';
-import { UserDocumentResponseDto } from './dto/upload-document.dto';
+import { DeleteDocumentDto, UserDocumentResponseDto } from './dto/upload-document.dto';
 import { CreateNoteDto, NoteResponseDto, UpdateNoteDto } from './dto/notes.dto';
 
 @Controller('users')
@@ -214,9 +214,9 @@ export class UsersController {
   // @Roles(ROLES.DIRECTOR, ROLES.MENTOR, ROLES.FIELD_MENTOR, ROLES.PASTOR)
   async deleteDocument(
     @Param('id', ParseMongoIdPipe) id: string,
-    @Body('documentUrl') documentUrl: string,
+    @Body() body: DeleteDocumentDto,
   ): Promise<BaseResponse<null>> {
-    await this.usersService.deleteDocument(id, documentUrl);
+    await this.usersService.deleteDocument(id, body.docId);
     return {
       success: true,
       message: 'Document deleted successfully',
