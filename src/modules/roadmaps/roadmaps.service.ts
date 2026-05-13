@@ -1162,6 +1162,9 @@ export class RoadMapsService {
         let selectedDay: any = null;
 
         for (const day of availability.weeklySlots) {
+            if ((day as { unavailable?: boolean }).unavailable) {
+                continue;
+            }
             for (const slot of day.slots || []) {
 
                 const tryDate = buildMeetingDate(day.date, slot);
@@ -1364,6 +1367,9 @@ export class RoadMapsService {
         let meetingDate: Date | null = null;
 
         for (const day of availability.weeklySlots) {
+            if ((day as { unavailable?: boolean }).unavailable) {
+                continue;
+            }
             for (const slot of day.slots || []) {
 
                 const tryDate = buildMeetingDate(day.date, slot);

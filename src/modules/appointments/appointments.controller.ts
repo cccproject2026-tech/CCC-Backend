@@ -4,7 +4,7 @@ import { CreateAppointmentDto, AppointmentResponseDto, UpdateAppointmentDto, Can
 import { BaseResponse } from 'src/shared/interfaces/base-response.interface';
 import { createHmac } from 'crypto';
 import { ConfigService } from '@nestjs/config';
-import { AvailabilityDto, DeleteAvailabilitySlotDto } from './dto/availability.dto';
+import { AvailabilityDto, DeleteAvailabilitySlotDto, MentorAvailabilityDayDto, UpdateMentorAvailabilitySettingsDto } from './dto/availability.dto';
 import { ParseMongoIdPipe } from 'src/common/pipes/parse-mongo-id.pipe';
 
 @Controller('appointments')
@@ -114,6 +114,45 @@ export class AppointmentsController {
         return {
             success: true,
             message: 'Availability slot deleted successfully.',
+            data,
+        };
+    }
+
+    @Post('availability/:mentorId/day/unavailable')
+    async markMentorDayUnavailable(
+        @Param('mentorId', ParseMongoIdPipe) mentorId: string,
+        @Body() dto: MentorAvailabilityDayDto,
+    ): Promise<BaseResponse<any>> {
+        const data = await this.appointmentsService.markMentorDayUnavailable(mentorId, dto);
+        return {
+            success: true,
+            message: 'Day marked unavailable.',
+            data,
+        };
+    }
+
+    @Post('availability/:mentorId/day/available')
+    async openMentorUnavailableDay(
+        @Param('mentorId', ParseMongoIdPipe) mentorId: string,
+        @Body() dto: MentorAvailabilityDayDto,
+    ): Promise<BaseResponse<any>> {
+        const data = await this.appointmentsService.openMentorUnavailableDay(mentorId, dto);
+        return {
+            success: true,
+            message: 'Day reopened with default availability.',
+            data,
+        };
+    }
+
+    @Patch('availability/:mentorId/settings')
+    async updateMentorAvailabilitySettings(
+        @Param('mentorId', ParseMongoIdPipe) mentorId: string,
+        @Body() dto: UpdateMentorAvailabilitySettingsDto,
+    ): Promise<BaseResponse<any>> {
+        const data = await this.appointmentsService.updateMentorAvailabilitySettings(mentorId, dto);
+        return {
+            success: true,
+            message: 'Availability settings updated.',
             data,
         };
     }

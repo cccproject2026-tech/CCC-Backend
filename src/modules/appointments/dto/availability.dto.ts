@@ -1,5 +1,6 @@
-import { IsArray, IsDateString, IsEnum, IsMongoId, IsNumber, IsOptional, IsString, Matches, ValidateNested } from 'class-validator';
+import { IsArray, IsDateString, IsEnum, IsIn, IsInt, IsMongoId, IsNumber, IsOptional, IsString, Matches, Max, Min, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
+import { VALID_APPOINTMENT_PLATFORMS } from 'src/common/constants/status.constants';
 
 const SLOT_TIME_REGEX = /^(0?[1-9]|1[0-2]):00$/;
 
@@ -50,6 +51,10 @@ export class AvailabilityDto {
     @IsOptional()
     @IsNumber()
     maxBookingsPerDay?: number;
+
+    @IsOptional()
+    @IsIn(VALID_APPOINTMENT_PLATFORMS)
+    preferredPlatform?: string;
 }
 
 export class DeleteAvailabilitySlotDto {
@@ -59,4 +64,38 @@ export class DeleteAvailabilitySlotDto {
     @IsOptional()
     @IsDateString()
     date?: string;
+}
+
+/** Single calendar day (YYYY-MM-DD) for block / reopen. */
+export class MentorAvailabilityDayDto {
+    @IsDateString()
+    date!: string;
+}
+
+/** Patch mentor-level booking rules (duration, notice, caps, platform). Send at least one field. */
+export class UpdateMentorAvailabilitySettingsDto {
+    @IsOptional()
+    @Type(() => Number)
+    @IsInt()
+    @Min(15)
+    @Max(480)
+    meetingDuration?: number;
+
+    @IsOptional()
+    @Type(() => Number)
+    @IsInt()
+    @Min(0)
+    @Max(168)
+    minSchedulingNoticeHours?: number;
+
+    @IsOptional()
+    @Type(() => Number)
+    @IsInt()
+    @Min(1)
+    @Max(50)
+    maxBookingsPerDay?: number;
+
+    @IsOptional()
+    @IsIn(VALID_APPOINTMENT_PLATFORMS)
+    preferredPlatform?: string;
 }

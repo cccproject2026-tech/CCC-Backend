@@ -38,6 +38,10 @@ export class DayAvailability {
 
     @Prop({ type: [SlotSchema], default: [] })
     slots: Slot[];
+
+    /** When true, the mentor blocked the whole day (no bookable slots). */
+    @Prop({ type: Boolean, default: false })
+    unavailable?: boolean;
 }
 
 export const DayAvailabilitySchema = SchemaFactory.createForClass(DayAvailability);

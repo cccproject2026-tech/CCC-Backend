@@ -9,6 +9,7 @@ import { S3Module } from '../s3/s3.module';
 import { MulterModule } from '@nestjs/platform-express';
 import { Interest, InterestSchema } from '../interests/schemas/interest.schema';
 import { HomeModule } from '../home/home.module';
+import { AppointmentsModule } from '../appointments/appointments.module';
 
 @Module({
     imports: [
@@ -21,6 +22,7 @@ import { HomeModule } from '../home/home.module';
         }),
         forwardRef(() => HomeModule),
         forwardRef(() => require('../interests/interests.module').InterestModule),
+        AppointmentsModule,
     ],
     controllers: [UsersController, SuperAdminController],
     providers: [UsersService, SuperAdminInitService],

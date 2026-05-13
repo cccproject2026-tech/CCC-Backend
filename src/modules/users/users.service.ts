@@ -25,6 +25,8 @@ import {
 import { ROLES } from '../../common/constants/roles.constants';
 import { nanoid } from 'nanoid';
 import { HomeService } from '../home/home.service';
+import { AppointmentsService } from '../appointments/appointments.service';
+import { USER_STATUSES } from '../../common/constants/status.constants';
 
 /** Mongoose assigns `_id` on each `uploadedDocuments` subdocument; it is not on the User class fields type. */
 type UploadedDocumentSubdoc = User['uploadedDocuments'][number] & {
@@ -38,6 +40,7 @@ export class UsersService {
         @InjectModel(Interest.name) private interestModel: Model<InterestDocument>,
         private readonly s3Service: S3Service,
         private readonly notificationService: HomeService,
+        private readonly appointmentsService: AppointmentsService,
     ) { }
 
     async create(dto: CreateUserDto): Promise<UserResponseDto> {
@@ -54,6 +57,17 @@ export class UsersService {
         });
 
         const savedUser = await user.save();
+        const role = savedUser.role;
+        const isAvailabilityRole =
+            role === ROLES.MENTOR ||
+            role === ROLES.FIELD_MENTOR ||
+            role === ROLES.DIRECTOR;
+        const shouldEnsureAvailability =
+            isAvailabilityRole &&
+            (role === ROLES.FIELD_MENTOR || savedUser.status === USER_STATUSES.ACCEPTED);
+        if (shouldEnsureAvailability) {
+            await this.appointmentsService.ensureDefaultHostAvailabilityForUserId(savedUser._id.toString());
+        }
         return toUserResponseDto(savedUser);
     }
 
@@ -187,6 +201,7 @@ export class UsersService {
             .select('-password -refreshToken -uploadedDocuments')
             .exec();
         if (!updated) throw new NotFoundException('User not found');
+
         return toUserResponseDto(updated);
     }
 
@@ -594,6 +609,10 @@ export class UsersService {
         if (!updatedUser) {
             throw new NotFoundException('User not found');
         }
+
+        await this.appointmentsService.ensureDefaultHostAvailabilityForUserId(
+            updatedUser._id.toString(),
+        );
 
         return toUserResponseDto(updatedUser);
     }
