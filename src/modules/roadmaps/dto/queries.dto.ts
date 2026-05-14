@@ -21,6 +21,17 @@ export class ReplyQueryDto {
     repliedMentorId: string;
 }
 
+/** Pastor updates own query text; userId must match the thread owner. */
+export class UpdateQueryDto {
+    @IsNotEmpty()
+    @IsString()
+    userId: string;
+
+    @IsNotEmpty()
+    @IsString()
+    actualQueryText: string;
+}
+
 export class QueryItemResponseDto {
     _id: string;
     actualQueryText: string;

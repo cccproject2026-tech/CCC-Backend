@@ -21,6 +21,7 @@ import {
     CreateQueryDto,
     QueriesThreadResponseDto,
     ReplyQueryDto,
+    UpdateQueryDto,
 } from './dto/queries.dto';
 import { CreateExtrasDto, UpdateExtrasDto, ExtrasResponseDto, ExtrasDocumentDto } from './dto/extras.dto';
 import { ParseMongoIdPipe } from 'src/common/pipes/parse-mongo-id.pipe';
@@ -244,6 +245,34 @@ export class RoadMapsController {
         return {
             success: true,
             message: 'Query replied successfully',
+            data: thread,
+        };
+    }
+
+    @Patch(':roadMapId/queries/:queryItemId')
+    async updateQuery(
+        @Param('roadMapId', ParseMongoIdPipe) roadMapId: string,
+        @Param('queryItemId', ParseMongoIdPipe) queryItemId: string,
+        @Body() dto: UpdateQueryDto,
+    ): Promise<BaseResponse<QueriesThreadResponseDto>> {
+        const thread = await this.roadMapsService.updateQuery(roadMapId, queryItemId, dto);
+        return {
+            success: true,
+            message: 'Query updated successfully',
+            data: thread,
+        };
+    }
+
+    @Delete(':roadMapId/queries/:queryItemId')
+    async deleteQuery(
+        @Param('roadMapId', ParseMongoIdPipe) roadMapId: string,
+        @Param('queryItemId', ParseMongoIdPipe) queryItemId: string,
+        @Query('userId', ParseMongoIdPipe) userId: string,
+    ): Promise<BaseResponse<QueriesThreadResponseDto>> {
+        const thread = await this.roadMapsService.deleteQuery(roadMapId, queryItemId, userId);
+        return {
+            success: true,
+            message: 'Query deleted successfully',
             data: thread,
         };
     }

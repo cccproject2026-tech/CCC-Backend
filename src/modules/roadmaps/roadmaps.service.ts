@@ -7,7 +7,7 @@ import { CreateRoadMapDto, RoadMapResponseDto, UpdateRoadMapDto, UpdateNestedRoa
 import { toRoadMapResponseDto } from './utils/roadmaps.mapper';
 import { Queries, QueriesDocument, QueryItem } from './schemas/queries.schema';
 import { AddCommentDto, CommentsThreadResponseDto } from './dto/comments.dto';
-import { CreateQueryDto, QueriesThreadResponseDto, ReplyQueryDto } from './dto/queries.dto';
+import { CreateQueryDto, QueriesThreadResponseDto, ReplyQueryDto, UpdateQueryDto } from './dto/queries.dto';
 import { toCommentsThreadResponseDto } from './utils/comments.mapper';
 import { toQueriesThreadResponseDto } from './utils/queries.mapper';
 import { VALID_ROADMAP_STATUSES, ROADMAP_STATUSES, QUERY_STATUSES } from '../../common/constants/status.constants';
@@ -348,6 +348,118 @@ export class RoadMapsService {
 
         if (!updatedThread) {
             throw new NotFoundException(`Query thread or item ID ${queryItemId} not found.`);
+        }
+
+        return toQueriesThreadResponseDto(updatedThread as any);
+    }
+
+    async updateQuery(
+        roadMapId: string,
+        queryItemId: string,
+        dto: UpdateQueryDto,
+    ): Promise<QueriesThreadResponseDto> {
+        const roadMapObjectId = new Types.ObjectId(roadMapId);
+        const userObjectId = new Types.ObjectId(dto.userId);
+        const queryItemObjectId = new Types.ObjectId(queryItemId);
+
+        const thread = await this.queriesModel
+            .findOne({
+                roadMapId: roadMapObjectId,
+                userId: userObjectId,
+                'queries._id': queryItemObjectId,
+            })
+            .lean()
+            .exec() as QueriesDocument | null;
+
+        if (!thread) {
+            throw new NotFoundException(
+                'Query thread not found, or query item does not belong to this roadmap and user.',
+            );
+        }
+
+        const item = (thread.queries || []).find(
+            (q: QueryItem) => q._id != null && q._id.equals(queryItemObjectId),
+        );
+
+        if (!item) {
+            throw new NotFoundException(`Query item ${queryItemId} not found.`);
+        }
+        if (item.status !== QUERY_STATUSES.PENDING) {
+            throw new BadRequestException('Only pending queries can be edited.');
+        }
+
+        const updatedThread = await this.queriesModel
+            .findOneAndUpdate(
+                {
+                    roadMapId: roadMapObjectId,
+                    userId: userObjectId,
+                    'queries._id': queryItemObjectId,
+                },
+                {
+                    $set: { 'queries.$.actualQueryText': dto.actualQueryText },
+                },
+                { new: true },
+            )
+            .lean()
+            .exec();
+
+        if (!updatedThread) {
+            throw new NotFoundException('Query could not be updated.');
+        }
+
+        return toQueriesThreadResponseDto(updatedThread as any);
+    }
+
+    async deleteQuery(
+        roadMapId: string,
+        queryItemId: string,
+        userId: string,
+    ): Promise<QueriesThreadResponseDto> {
+        const roadMapObjectId = new Types.ObjectId(roadMapId);
+        const userObjectId = new Types.ObjectId(userId);
+        const queryItemObjectId = new Types.ObjectId(queryItemId);
+
+        const thread = await this.queriesModel
+            .findOne({
+                roadMapId: roadMapObjectId,
+                userId: userObjectId,
+            })
+            .lean()
+            .exec() as QueriesDocument | null;
+
+        if (!thread) {
+            throw new NotFoundException('Query thread not found for this roadmap and user.');
+        }
+
+        const item = (thread.queries || []).find(
+            (q: QueryItem) => q._id != null && q._id.equals(queryItemObjectId),
+        );
+
+        if (!item) {
+            throw new NotFoundException(`Query item ${queryItemId} not found.`);
+        }
+        if (item.status !== QUERY_STATUSES.PENDING) {
+            throw new BadRequestException('Only pending queries can be deleted.');
+        }
+
+        const updatedThread = await this.queriesModel
+            .findOneAndUpdate(
+                { roadMapId: roadMapObjectId, userId: userObjectId },
+                {
+                    $pull: {
+                        queries: {
+                            _id: queryItemObjectId,
+                            status: QUERY_STATUSES.PENDING,
+                        },
+                    },
+                },
+                { new: true },
+            )
+            .lean()
+            .exec();
+
+        if (!updatedThread) {
+            throw new NotFoundException('Query could not be deleted.');
         }
 
         return toQueriesThreadResponseDto(updatedThread as any);
