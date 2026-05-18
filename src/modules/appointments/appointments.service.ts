@@ -6,7 +6,7 @@ import { CreateAppointmentDto, AppointmentResponseDto, TranscriptSummaryResponse
 import { toAppointmentResponseDto } from './utils/appointment.mapper';
 import { APPOINTMENT_STATUSES, APPOINTMENT_PLATFORMS, ASSESSMENT_ASSIGNMENT_STATUSES, USER_STATUSES } from '../../common/constants/status.constants';
 import { Availability, AvailabilityDocument } from './schemas/availability.schema';
-import { AvailabilityDto, DeleteAvailabilitySlotDto, MentorAvailabilityDayDto, UpdateMentorAvailabilitySettingsDto } from './dto/availability.dto';
+import { AvailabilityDto, DeleteAvailabilitySlotDto, MentorAvailabilityDayDto, OpenMentorDayDto, UpdateMentorAvailabilitySettingsDto } from './dto/availability.dto';
 import { buildSlotDate, convertSlotToMinutes, generateMonthlyAvailability, getWeekRange, HourSlot, splitIntoDurationSlots } from './utils/availability.utils';
 import { HomeService } from '../home/home.service';
 import { ROLES, isHostRole } from 'src/common/constants/roles.constants';
@@ -853,54 +853,8 @@ export class AppointmentsService {
     }
 
     /**
-     * Default calendar availability applies only to mentor, field mentor, and director (not super admin
-     * or other roles). Seeds Mon–Sat template only if they have no `weeklySlots` yet.
-     * Safe to call multiple times: no-op if slots already exist. Field mentors are eligible immediately
-     * after invitation accept (status may still be pending). Mentor and director require `accepted` status.
-     */
-    async ensureDefaultHostAvailabilityForUserId(userId: string): Promise<void> {
-        try {
-            const UserModel = this.appointmentModel.db.model('User');
-            const user = await UserModel.findById(userId).select('role status').lean() as {
-                role?: string;
-                status?: string;
-            } | null;
-            const role = user?.role;
-            const isAvailabilityRole =
-                role === ROLES.MENTOR ||
-                role === ROLES.FIELD_MENTOR ||
-                role === ROLES.DIRECTOR;
-            if (!role || !isAvailabilityRole) {
-                return;
-            }
-
-            const fieldMentorImmediate = role === ROLES.FIELD_MENTOR;
-            if (!fieldMentorImmediate && user.status !== USER_STATUSES.ACCEPTED) {
-                return;
-            }
-
-            const mentorOid = new Types.ObjectId(userId);
-            const existing = await this.availabilityModel
-                .findOne({ mentorId: mentorOid })
-                .select('weeklySlots')
-                .lean()
-                .exec() as { weeklySlots?: unknown[] } | null;
-            if (existing?.weeklySlots?.length) {
-                return;
-            }
-
-            await this.upsertDefaultSixtyDayMonSatTemplateForMentor(userId);
-        } catch (err: any) {
-            this.logger.warn(
-                `ensureDefaultHostAvailabilityForUserId(${userId}): ${err?.message ?? err}`,
-            );
-        }
-    }
-
-    /**
-     * Migration / backfill: mentor & director (accepted) and field mentor (any status) get the default
-     * template applied (overwrites generated days). Prefer `ensureDefaultHostAvailabilityForUserId`
-     * in product flows. Optional script: `npm run seed:mentor-availability`.
+     * Optional one-time migration only — not used on user create, interest accept, or cron.
+     * Run manually: `npm run seed:mentor-availability`.
      */
     async seedDefaultSixtyDayAvailabilityForMentorsAndDirectors(): Promise<{
         userCount: number;
@@ -940,162 +894,6 @@ export class AppointmentsService {
         );
 
         return { userCount: users.length, seeded, errors };
-    }
-
-    /** Start of “today” in UTC (same basis as `buildMonSatNineToNineWeeklySlots`). */
-    private startOfTodayUtc(): Date {
-        const d = new Date();
-        d.setUTCHours(0, 0, 0, 0);
-        return d;
-    }
-
-    /**
-     * For one mentor with an availability document: drop days before today UTC, then ensure every
-     * Mon–Sat calendar day in [today, today + 59] exists (default 9–9 raw window). Sundays are skipped.
-     * Missing days (e.g. after downtime) are filled in one batched upsert. Preserves duration / notice / max / platform.
-     */
-    async extendRollingAvailabilityForMentorId(mentorId: string): Promise<
-        | 'extended'
-        | 'skippedAlreadyPresent'
-        | 'skippedNoAvailability'
-    > {
-        const todayStart = this.startOfTodayUtc();
-        const mentorOid = new Types.ObjectId(mentorId);
-
-        const existsBefore = await this.availabilityModel
-            .findOne({ mentorId: mentorOid })
-            .select('_id')
-            .lean()
-            .exec();
-        if (!existsBefore) {
-            return 'skippedNoAvailability';
-        }
-
-        await this.availabilityModel.updateOne(
-            { mentorId: mentorOid },
-            { $pull: { weeklySlots: { date: { $lt: todayStart } } } },
-        );
-
-        const availability = await this.availabilityModel
-            .findOne({ mentorId: mentorOid })
-            .lean()
-            .exec() as (Pick<AvailabilityDocument, 'meetingDuration' | 'minSchedulingNoticeHours' | 'maxBookingsPerDay' | 'preferredPlatform'> & {
-                weeklySlots?: { date: Date }[];
-            }) | null;
-
-        if (!availability) {
-            return 'skippedNoAvailability';
-        }
-
-        const existingKeys = new Set(
-            (availability.weeklySlots || []).map((w) =>
-                new Date(w.date).toISOString().split('T')[0],
-            ),
-        );
-
-        const rawRange: HourSlot = {
-            startTime: '9:00',
-            startPeriod: 'AM',
-            endTime: '9:00',
-            endPeriod: 'PM',
-        };
-
-        const missingWeeklySlots: { date: string; slots: HourSlot[] }[] = [];
-        for (let i = 0; i < 60; i += 1) {
-            const d = new Date(todayStart);
-            d.setUTCDate(todayStart.getUTCDate() + i);
-            if (d.getUTCDay() === 0) {
-                continue;
-            }
-            const dateStr = d.toISOString().split('T')[0];
-            if (!existingKeys.has(dateStr)) {
-                missingWeeklySlots.push({ date: dateStr, slots: [{ ...rawRange }] });
-            }
-        }
-
-        if (missingWeeklySlots.length === 0) {
-            return 'skippedAlreadyPresent';
-        }
-
-        const dto: AvailabilityDto = {
-            mentorId,
-            weeklySlots: missingWeeklySlots,
-            meetingDuration: availability.meetingDuration ?? 60,
-            minSchedulingNoticeHours: availability.minSchedulingNoticeHours ?? 2,
-            maxBookingsPerDay: availability.maxBookingsPerDay ?? 5,
-        };
-        if (availability.preferredPlatform != null) {
-            dto.preferredPlatform = availability.preferredPlatform;
-        }
-
-        await this.upsertAvailability(dto);
-        return 'extended';
-    }
-
-    /**
-     * Cron entry: every mentor/director/field-mentor who already has an availability row gets
-     * past days pruned (before today UTC) and any missing Mon–Sat days in the next 60 calendar days filled.
-     */
-    async extendRollingAvailabilityForAllEligibleMentors(): Promise<{
-        availabilityDocs: number;
-        extended: number;
-        skippedAlreadyPresent: number;
-        skippedNoAvailability: number;
-        errors: number;
-    }> {
-        const availDocs = await this.availabilityModel.aggregate<{ mentorId: Types.ObjectId }>([
-            {
-                $lookup: {
-                    from: 'users',
-                    localField: 'mentorId',
-                    foreignField: '_id',
-                    as: 'mentor',
-                },
-            },
-            { $unwind: { path: '$mentor', preserveNullAndEmptyArrays: false } },
-            {
-                $match: {
-                    'mentor.role': {
-                        $in: [ROLES.MENTOR, ROLES.FIELD_MENTOR, ROLES.DIRECTOR],
-                    },
-                },
-            },
-            { $project: { _id: 0, mentorId: 1 } },
-        ]);
-
-        let extended = 0;
-        let skippedAlreadyPresent = 0;
-        let skippedNoAvailability = 0;
-        let errors = 0;
-
-        for (const row of availDocs) {
-            const id = row.mentorId.toString();
-            try {
-                const r = await this.extendRollingAvailabilityForMentorId(id);
-                if (r === 'extended') {
-                    extended += 1;
-                } else if (r === 'skippedAlreadyPresent') {
-                    skippedAlreadyPresent += 1;
-                } else if (r === 'skippedNoAvailability') {
-                    skippedNoAvailability += 1;
-                }
-            } catch (err: any) {
-                errors += 1;
-                this.logger.warn(
-                    `extendRollingAvailabilityForMentorId(${id}): ${err?.message ?? err}`,
-                );
-            }
-        }
-
-        const summary = {
-            availabilityDocs: availDocs.length,
-            extended,
-            skippedAlreadyPresent,
-            skippedNoAvailability,
-            errors,
-        };
-        this.logger.log(`extendRollingAvailabilityForAllEligibleMentors: ${JSON.stringify(summary)}`);
-        return summary;
     }
 
     async deleteAvailabilitySlot(mentorId: string, dto: DeleteAvailabilitySlotDto) {
@@ -1784,44 +1582,30 @@ export class AppointmentsService {
     }
 
     /**
-     * Re-open a day that was marked unavailable: restores default 9:00 AM–9:00 PM window
-     * (expanded with current meeting duration and appointment overlap rules).
+     * Re-open a day with caller-defined time windows (e.g. 10 AM–12 PM and 6 PM–9 PM).
+     * Slots are expanded using meeting duration and existing appointment overlap rules.
      */
-    async openMentorUnavailableDay(mentorId: string, dto: MentorAvailabilityDayDto) {
+    async openMentorUnavailableDay(mentorId: string, dto: OpenMentorDayDto) {
         await this.assertMentorDirectorFieldMentorForAvailability(mentorId);
         const dateStr = AppointmentsService.dayKeyFromInput(dto.date);
         const mentorOid = new Types.ObjectId(mentorId);
 
         const existing = await this.availabilityModel.findOne({ mentorId: mentorOid }).lean();
-        if (!existing) {
-            throw new NotFoundException('Mentor availability not found.');
-        }
-
-        const dayEntry = existing.weeklySlots.find(
-            w => w.date.toISOString().split('T')[0] === dateStr,
-        );
-        if (!dayEntry || !(dayEntry as { unavailable?: boolean }).unavailable) {
-            throw new BadRequestException(
-                'This day is not marked as unavailable, or no entry exists for this date.',
-            );
-        }
-
-        const rawRange: HourSlot = {
-            startTime: '9:00',
-            startPeriod: 'AM',
-            endTime: '9:00',
-            endPeriod: 'PM',
-        };
 
         await this.upsertAvailability({
             mentorId,
-            weeklySlots: [{ date: dateStr, slots: [rawRange] }],
-            meetingDuration: existing.meetingDuration ?? 60,
-            minSchedulingNoticeHours: existing.minSchedulingNoticeHours ?? 2,
-            maxBookingsPerDay: existing.maxBookingsPerDay ?? 5,
-            preferredPlatform: existing.preferredPlatform,
+            weeklySlots: [{ date: dateStr, slots: dto.slots }],
+            meetingDuration: existing?.meetingDuration ?? 60,
+            minSchedulingNoticeHours: existing?.minSchedulingNoticeHours ?? 2,
+            maxBookingsPerDay: existing?.maxBookingsPerDay ?? 5,
+            preferredPlatform: existing?.preferredPlatform,
         });
 
-        return { mentorId, date: dateStr, unavailable: false };
+        return {
+            mentorId,
+            date: dateStr,
+            unavailable: false,
+            slots: dto.slots,
+        };
     }
 }

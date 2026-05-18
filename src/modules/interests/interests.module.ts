@@ -8,7 +8,6 @@ import { InterestFormFieldsService } from './services/interest-form-fields.servi
 import { MailerService } from 'src/common/utils/mail.util';
 import { UsersModule } from '../users/users.module';
 import { HomeModule } from '../home/home.module';
-import { AppointmentsModule } from '../appointments/appointments.module';
 
 @Module({
   imports: [
@@ -18,7 +17,6 @@ import { AppointmentsModule } from '../appointments/appointments.module';
     ]),
     forwardRef(() => UsersModule),
     HomeModule,
-    AppointmentsModule,
   ],
   controllers: [InterestController],
   providers: [InterestService, InterestFormFieldsService, MailerService],

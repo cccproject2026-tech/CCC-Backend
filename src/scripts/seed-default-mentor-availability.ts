@@ -4,7 +4,8 @@ import { AppModule } from '../app.module';
 import { AppointmentsService } from '../modules/appointments/appointments.service';
 
 /**
- * One-time (or rare migration): seeds next 60 days Mon–Sat, 9 AM–9 PM, for all accepted mentors + directors.
+ * Optional manual migration only (not run on signup, interest accept, or cron).
+ * Seeds next 60 days Mon–Sat, 9 AM–9 PM, for mentors/directors/field mentors.
  *
  * Usage (from repo root, with .env loaded):
  *   npm run seed:mentor-availability

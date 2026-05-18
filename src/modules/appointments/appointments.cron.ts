@@ -4,7 +4,6 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { Appointment, AppointmentDocument } from './schemas/appointment.schema';
 import { APPOINTMENT_STATUSES } from '../../common/constants/status.constants';
-import { AppointmentsService } from './appointments.service';
 
 @Injectable()
 export class AppointmentsCronService {
@@ -13,7 +12,6 @@ export class AppointmentsCronService {
   constructor(
     @InjectModel(Appointment.name)
     private readonly appointmentModel: Model<AppointmentDocument>,
-    private readonly appointmentsService: AppointmentsService,
   ) { }
 
   /**
@@ -72,23 +70,6 @@ export class AppointmentsCronService {
     if (missedModified > 0 || completedModified > 0) {
       this.logger.log(
         `Processed past appointments: ${missedModified} marked missed, ${completedModified} completed links disabled.`,
-      );
-    }
-  }
-
-  /**
-   * Once per day (Asia/Kolkata): for every mentor / field mentor / director who already has an
-   * availability document, prune days before today UTC and fill any missing Mon–Sat days in the
-   * next 60 calendar days (default 9–9 window). Sundays are never added.
-   */
-  @Cron('30 0 * * *', { timeZone: 'Asia/Kolkata' })
-  async maintainRollingAvailabilityHorizon(): Promise<void> {
-    try {
-      await this.appointmentsService.extendRollingAvailabilityForAllEligibleMentors();
-    } catch (err: any) {
-      this.logger.error(
-        `maintainRollingAvailabilityHorizon failed: ${err?.message ?? err}`,
-        err?.stack,
       );
     }
   }

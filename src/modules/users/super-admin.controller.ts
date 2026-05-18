@@ -19,7 +19,6 @@ import { CreateUserDto } from './dto/create-user.dto';
 import { UserResponseDto } from './dto/user-response.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { InterestService } from '../interests/interests.service';
-import { AppointmentsService } from '../appointments/appointments.service';
 
 @Controller('super-admin')
 // @UseGuards(JwtAuthGuard, RolesGuard)
@@ -28,7 +27,6 @@ export class SuperAdminController {
     constructor(
         private readonly usersService: UsersService,
         private readonly interestService: InterestService,
-        private readonly appointmentsService: AppointmentsService,
     ) { }
 
     @Post('directors')
@@ -55,8 +53,6 @@ export class SuperAdminController {
         const director = await this.usersService.update(interest.userId as string, {
             password: dto.password,
         });
-
-        await this.appointmentsService.ensureDefaultHostAvailabilityForUserId(director.id);
 
         return {
             success: true,

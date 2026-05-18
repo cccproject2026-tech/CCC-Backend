@@ -1,4 +1,4 @@
-import { IsArray, IsDateString, IsEnum, IsIn, IsInt, IsMongoId, IsNumber, IsOptional, IsString, Matches, Max, Min, ValidateNested } from 'class-validator';
+import { ArrayMinSize, IsArray, IsDateString, IsEnum, IsIn, IsInt, IsMongoId, IsNumber, IsOptional, IsString, Matches, Max, Min, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 import { VALID_APPOINTMENT_PLATFORMS } from 'src/common/constants/status.constants';
 
@@ -66,10 +66,22 @@ export class DeleteAvailabilitySlotDto {
     date?: string;
 }
 
-/** Single calendar day (YYYY-MM-DD) for block / reopen. */
+/** Single calendar day (YYYY-MM-DD) for block. */
 export class MentorAvailabilityDayDto {
     @IsDateString()
     date!: string;
+}
+
+/** Re-open a day with user-defined hours (one or more windows per day). */
+export class OpenMentorDayDto {
+    @IsDateString()
+    date!: string;
+
+    @IsArray()
+    @ArrayMinSize(1)
+    @ValidateNested({ each: true })
+    @Type(() => TimeSlotDto)
+    slots!: TimeSlotDto[];
 }
 
 /** Patch mentor-level booking rules (duration, notice, caps, platform). Send at least one field. */

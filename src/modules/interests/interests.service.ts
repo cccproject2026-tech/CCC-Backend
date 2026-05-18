@@ -23,7 +23,6 @@ import { VALID_USER_APPLICATION_STATUSES, USER_APPLICATION_STATUSES, VALID_USER_
 import { UsersService } from '../users/users.service';
 import { ROLES } from '../../common/constants/roles.constants';
 import { HomeService } from '../home/home.service';
-import { AppointmentsService } from '../appointments/appointments.service';
 
 @Injectable()
 export class InterestService {
@@ -32,7 +31,6 @@ export class InterestService {
     private readonly interestModel: Model<InterestDocument>,
     private readonly usersService: UsersService,
     private readonly notificationService: HomeService,
-    private readonly appointmentsService: AppointmentsService,
   ) { }
 
   private mapTitleToRole(title?: string): string {
@@ -285,17 +283,6 @@ export class InterestService {
 
     const updatedUser = await this.usersService.update(userId, { status });
     console.log(`Updated user ${userId} with status: ${status}`);
-
-    if (status === USER_STATUSES.ACCEPTED) {
-      const role = updatedUser.role;
-      if (
-        role === ROLES.MENTOR ||
-        role === ROLES.FIELD_MENTOR ||
-        role === ROLES.DIRECTOR
-      ) {
-        await this.appointmentsService.ensureDefaultHostAvailabilityForUserId(userId);
-      }
-    }
 
     this.interestModel.updateOne(
       { userId: userId },

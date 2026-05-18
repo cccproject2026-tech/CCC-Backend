@@ -4,7 +4,7 @@ import { CreateAppointmentDto, AppointmentResponseDto, UpdateAppointmentDto, Can
 import { BaseResponse } from 'src/shared/interfaces/base-response.interface';
 import { createHmac } from 'crypto';
 import { ConfigService } from '@nestjs/config';
-import { AvailabilityDto, DeleteAvailabilitySlotDto, MentorAvailabilityDayDto, UpdateMentorAvailabilitySettingsDto } from './dto/availability.dto';
+import { AvailabilityDto, DeleteAvailabilitySlotDto, MentorAvailabilityDayDto, OpenMentorDayDto, UpdateMentorAvailabilitySettingsDto } from './dto/availability.dto';
 import { ParseMongoIdPipe } from 'src/common/pipes/parse-mongo-id.pipe';
 
 @Controller('appointments')
@@ -134,12 +134,12 @@ export class AppointmentsController {
     @Post('availability/:mentorId/day/available')
     async openMentorUnavailableDay(
         @Param('mentorId', ParseMongoIdPipe) mentorId: string,
-        @Body() dto: MentorAvailabilityDayDto,
+        @Body() dto: OpenMentorDayDto,
     ): Promise<BaseResponse<any>> {
         const data = await this.appointmentsService.openMentorUnavailableDay(mentorId, dto);
         return {
             success: true,
-            message: 'Day reopened with default availability.',
+            message: 'Day reopened with specified availability.',
             data,
         };
     }
