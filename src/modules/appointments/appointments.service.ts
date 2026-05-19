@@ -5,9 +5,28 @@ import { Appointment, AppointmentDocument } from './schemas/appointment.schema';
 import { CreateAppointmentDto, AppointmentResponseDto, TranscriptSummaryResponseDto, UpdateAppointmentDto } from './dto/appointment.dto';
 import { toAppointmentResponseDto } from './utils/appointment.mapper';
 import { APPOINTMENT_STATUSES, APPOINTMENT_PLATFORMS, ASSESSMENT_ASSIGNMENT_STATUSES, USER_STATUSES } from '../../common/constants/status.constants';
-import { Availability, AvailabilityDocument } from './schemas/availability.schema';
-import { AvailabilityDto, DeleteAvailabilitySlotDto, MentorAvailabilityDayDto, OpenMentorDayDto, UpdateMentorAvailabilitySettingsDto } from './dto/availability.dto';
-import { buildSlotDate, convertSlotToMinutes, generateMonthlyAvailability, getWeekRange, HourSlot, splitIntoDurationSlots } from './utils/availability.utils';
+import { Availability, AvailabilityDocument, DayAvailability } from './schemas/availability.schema';
+import {
+    AvailabilityDto,
+    CreateRecurringAvailabilityDto,
+    DeleteAvailabilitySlotDto,
+    MentorAvailabilityDayDto,
+    OpenMentorDayDto,
+    UpdateMentorAvailabilitySettingsDto,
+    UpsertSingleDayAvailabilityDto,
+} from './dto/availability.dto';
+import {
+    buildSlotDate,
+    consolidateTemplateSlotsByUtcWeekday,
+    convertSlotToMinutes,
+    dateKeyUtcForInput,
+    generateMonthlyAvailability,
+    getWeekRange,
+    HourSlot,
+    iterateUtcDaysFromToday,
+    splitIntoDurationSlots,
+    validateSameDayRawSlotsNonOverlapping,
+} from './utils/availability.utils';
 import { HomeService } from '../home/home.service';
 import { ROLES, isHostRole } from 'src/common/constants/roles.constants';
 import { ZoomService } from '../zoom/zoom.service';
@@ -79,6 +98,159 @@ export class AppointmentsService {
         }
 
         return merged;
+    }
+
+    private uniqPushString(list: string[] | undefined, value: string): string[] {
+        const arr = list ?? [];
+        return arr.includes(value) ? [...arr] : [...arr, value];
+    }
+
+    private listWithoutString(list: string[] | undefined, value: string): string[] {
+        return (list ?? []).filter((entry) => entry !== value);
+    }
+
+    /** UTC `YYYY-MM-DD` from arbitrary date payloads. */
+    private coerceDayKeyUTC(dateInput: string): string {
+        try {
+            return dateKeyUtcForInput(dateInput);
+        } catch {
+            throw new BadRequestException('Invalid date.');
+        }
+    }
+
+    /**
+     * Writes one UTC calendar day's availability (expanded chunks skip conflicts with SCHEDULED appointments).
+     */
+    private async applyDayAvailabilityEntry(
+        availability: AvailabilityDocument,
+        mentorId: Types.ObjectId,
+        dateKey: string,
+        rawSlots: HourSlot[],
+        meetingDuration: number,
+        flags: {
+            unavailable: boolean;
+            generation?: 'recurring' | 'override' | 'legacy';
+        },
+    ): Promise<void> {
+        if (!flags.unavailable && rawSlots.length > 0) {
+            const check = validateSameDayRawSlotsNonOverlapping(rawSlots);
+            if (!check.ok) {
+                throw new BadRequestException(check.message);
+            }
+        }
+
+        let filteredExpanded: HourSlot[] = [];
+        if (!flags.unavailable && rawSlots.length > 0) {
+            const expanded = rawSlots.flatMap((slot) =>
+                splitIntoDurationSlots(
+                    slot.startTime,
+                    slot.startPeriod,
+                    slot.endTime,
+                    slot.endPeriod,
+                    meetingDuration,
+                ),
+            );
+
+            const dayStart = new Date(`${dateKey}T00:00:00.000Z`);
+            const dayEnd = new Date(`${dateKey}T23:59:59.999Z`);
+
+            const dayAppointments = await this.appointmentModel
+                .find({
+                    mentorId,
+                    meetingDate: { $gte: dayStart, $lte: dayEnd },
+                    status: APPOINTMENT_STATUSES.SCHEDULED,
+                })
+                .select('meetingDate endTime')
+                .lean();
+
+            filteredExpanded = expanded.filter((slot) => {
+                const { start, end } = this.getSlotDateRange(dateKey, slot);
+                const overlaps = dayAppointments.some((appointment: { meetingDate: Date; endTime: Date }) => {
+                    const appointmentStart = new Date(appointment.meetingDate);
+                    const appointmentEnd = new Date(appointment.endTime);
+                    return appointmentStart < end && appointmentEnd > start;
+                });
+                return !overlaps;
+            });
+        }
+
+        const dayStart = new Date(`${dateKey}T00:00:00.000Z`);
+        const index = availability.weeklySlots.findIndex((d) => d.date.toISOString().split('T')[0] === dateKey);
+
+        const generation: 'recurring' | 'override' | 'legacy' = flags.generation ?? 'legacy';
+
+        const entry: DayAvailability = {
+            date: dayStart,
+            rawSlots: flags.unavailable ? [] : rawSlots,
+            slots: flags.unavailable ? [] : filteredExpanded,
+            unavailable: !!flags.unavailable,
+            generation,
+        };
+
+        if (index !== -1) {
+            availability.weeklySlots[index] = entry;
+        } else {
+            availability.weeklySlots.push(entry);
+        }
+    }
+
+    private async removeDayRowIfRecurringGenerated(
+        availability: AvailabilityDocument,
+        dateKey: string,
+    ): Promise<void> {
+        const index = availability.weeklySlots.findIndex((d) => d.date.toISOString().split('T')[0] === dateKey);
+        if (index === -1) {
+            return;
+        }
+        const row = availability.weeklySlots[index] as { generation?: string };
+        if (row.generation === 'recurring') {
+            availability.weeklySlots.splice(index, 1);
+        }
+    }
+
+    /** Refreshes auto-generated recurring rows inside the horizon; preserves exceptions, suppressions, and unavailable rows. */
+    private async rematerializeRecurringForAvailability(availability: AvailabilityDocument): Promise<void> {
+        const pattern = availability.recurringWeeklyPattern ?? [];
+        if (!pattern.length) {
+            return;
+        }
+
+        const mentorId = availability.mentorId as Types.ObjectId;
+        const horizon = Math.min(Math.max(availability.recurringHorizonDays ?? 60, 7), 120);
+        const meetingDuration = availability.meetingDuration ?? 60;
+        const suppressed = new Set(availability.recurringSuppressedDates ?? []);
+        const exceptions = new Set(availability.recurringExceptionDates ?? []);
+
+        const patternByWeekday = new Map<number, HourSlot[]>();
+        for (const row of pattern) {
+            patternByWeekday.set(row.weekday, row.rawSlots as HourSlot[]);
+        }
+
+        const days = iterateUtcDaysFromToday(horizon);
+
+        for (const { dateKey, weekday } of days) {
+            if (suppressed.has(dateKey) || exceptions.has(dateKey)) {
+                continue;
+            }
+
+            const template = availability.weeklySlots.find(
+                (w) => w.date.toISOString().split('T')[0] === dateKey,
+            ) as { unavailable?: boolean } | undefined;
+
+            if (template?.unavailable) {
+                continue;
+            }
+
+            const rawForDay = patternByWeekday.get(weekday);
+            if (rawForDay && rawForDay.length > 0) {
+                await this.applyDayAvailabilityEntry(availability, mentorId, dateKey, rawForDay, meetingDuration, {
+                    unavailable: false,
+                    generation: 'recurring',
+                });
+            } else {
+                await this.removeDayRowIfRecurringGenerated(availability, dateKey);
+            }
+        }
     }
 
     private getSlotDateRange(dateStr: string, slot: HourSlot): { start: Date; end: Date } {
@@ -731,87 +903,212 @@ export class AppointmentsService {
     }
 
     async upsertAvailability(dto: AvailabilityDto) {
-
         const mentorId = new Types.ObjectId(dto.mentorId);
-        const meetingDuration = dto.meetingDuration ?? 60;
-
         let availability = await this.availabilityModel.findOne({ mentorId });
 
         if (!availability) {
             availability = new this.availabilityModel({
                 mentorId,
-                weeklySlots: []
+                weeklySlots: [],
             });
         }
 
+        const meetingDuration = dto.meetingDuration ?? availability.meetingDuration ?? 60;
+        const recurringActive =
+            Array.isArray(availability.recurringWeeklyPattern) &&
+            availability.recurringWeeklyPattern.length > 0;
+
         for (const day of dto.weeklySlots) {
-
-            const raw = day.slots;
-
-            const expanded = raw.flatMap(slot =>
-                splitIntoDurationSlots(
-                    slot.startTime,
-                    slot.startPeriod,
-                    slot.endTime,
-                    slot.endPeriod,
-                    meetingDuration
-                )
-            );
-
-            const dateStr = new Date(day.date).toISOString().split("T")[0];
-
-            const dayStart = new Date(`${dateStr}T00:00:00.000Z`);
-            const dayEnd = new Date(`${dateStr}T23:59:59.999Z`);
-
-            const dayAppointments = await this.appointmentModel
-                .find({
-                    mentorId,
-                    meetingDate: { $gte: dayStart, $lte: dayEnd },
-                    status: APPOINTMENT_STATUSES.SCHEDULED,
-                })
-                .select('meetingDate endTime')
-                .lean();
-
-            const filteredExpanded = expanded.filter((slot) => {
-                const { start, end } = this.getSlotDateRange(dateStr, slot);
-
-                const overlaps = dayAppointments.some((appointment: any) => {
-                    const appointmentStart = new Date(appointment.meetingDate);
-                    const appointmentEnd = new Date(appointment.endTime);
-                    return appointmentStart < end && appointmentEnd > start;
-                });
-
-                return !overlaps;
+            const dateStr = this.coerceDayKeyUTC(day.date);
+            await this.applyDayAvailabilityEntry(availability, mentorId, dateStr, day.slots, meetingDuration, {
+                unavailable: false,
+                generation: recurringActive ? 'override' : 'legacy',
             });
 
-            const index = availability.weeklySlots.findIndex(
-                d => d.date.toISOString().split("T")[0] === dateStr
-            );
-
-            const entry = {
-                date: new Date(day.date),
-                rawSlots: raw,
-                slots: filteredExpanded,
-                unavailable: false,
-            };
-
-            if (index !== -1) {
-                availability.weeklySlots[index] = entry;
-            } else {
-                availability.weeklySlots.push(entry);
+            if (recurringActive) {
+                availability.recurringExceptionDates = this.uniqPushString(
+                    availability.recurringExceptionDates,
+                    dateStr,
+                );
+                availability.recurringSuppressedDates = this.listWithoutString(
+                    availability.recurringSuppressedDates,
+                    dateStr,
+                );
             }
         }
 
         availability.meetingDuration = meetingDuration;
-        availability.minSchedulingNoticeHours = dto.minSchedulingNoticeHours ?? 2;
-        availability.maxBookingsPerDay = dto.maxBookingsPerDay ?? 5;
+        availability.minSchedulingNoticeHours =
+            dto.minSchedulingNoticeHours ?? availability.minSchedulingNoticeHours ?? 2;
+        availability.maxBookingsPerDay = dto.maxBookingsPerDay ?? availability.maxBookingsPerDay ?? 5;
         if (dto.preferredPlatform != null) {
             availability.preferredPlatform = dto.preferredPlatform;
+        }
+
+        if (recurringActive) {
+            await this.rematerializeRecurringForAvailability(availability);
         }
 
         await availability.save();
 
         return availability;
+    }
+
+    /** Save or replace the master weekly pattern and materialize the next `horizonDays` (default 60). */
+    async createRecurringWeeklyAvailability(dto: CreateRecurringAvailabilityDto) {
+        await this.assertMentorDirectorFieldMentorForAvailability(dto.mentorId);
+
+        const consolidated = consolidateTemplateSlotsByUtcWeekday(
+            dto.templateWeeklySlots.map((row) => ({ date: row.date, slots: row.slots })),
+        );
+
+        const recurringWeeklyPattern = [...consolidated.entries()]
+            .sort((a, b) => a[0] - b[0])
+            .filter(([, slots]) => slots.length > 0)
+            .map(([weekday, slots]) => {
+                const chk = validateSameDayRawSlotsNonOverlapping(slots);
+                if (!chk.ok) {
+                    throw new BadRequestException(chk.message);
+                }
+                return { weekday, rawSlots: slots };
+            });
+
+        if (recurringWeeklyPattern.length === 0) {
+            throw new BadRequestException(
+                'Provide at least one day with non-empty availability windows for the repeating schedule.',
+            );
+        }
+
+        const mentorOid = new Types.ObjectId(dto.mentorId);
+        let availability = await this.availabilityModel.findOne({ mentorId: mentorOid });
+        if (!availability) {
+            availability = new this.availabilityModel({ mentorId: mentorOid, weeklySlots: [] });
+        }
+
+        if (dto.clearPersonalizations) {
+            availability.recurringExceptionDates = [];
+            availability.recurringSuppressedDates = [];
+        }
+
+        availability.recurringWeeklyPattern = recurringWeeklyPattern as Availability['recurringWeeklyPattern'];
+        availability.recurringHorizonDays =
+            dto.horizonDays != null
+                ? Math.min(Math.max(dto.horizonDays, 7), 120)
+                : (availability.recurringHorizonDays ?? 60);
+
+        if (dto.meetingDuration != null) {
+            availability.meetingDuration = dto.meetingDuration;
+        }
+        if (dto.minSchedulingNoticeHours != null) {
+            availability.minSchedulingNoticeHours = dto.minSchedulingNoticeHours;
+        }
+        if (dto.maxBookingsPerDay != null) {
+            availability.maxBookingsPerDay = dto.maxBookingsPerDay;
+        }
+        if (dto.preferredPlatform != null) {
+            availability.preferredPlatform = dto.preferredPlatform;
+        }
+
+        await this.rematerializeRecurringForAvailability(availability);
+        await availability.save();
+
+        return availability;
+    }
+
+    /** Update one calendar day's windows; keeps other recurring-generated days untouched. */
+    async upsertSingleDayAvailability(mentorId: string, dto: UpsertSingleDayAvailabilityDto) {
+        await this.assertMentorDirectorFieldMentorForAvailability(mentorId);
+
+        const mentorOid = new Types.ObjectId(mentorId);
+        const dateKey = this.coerceDayKeyUTC(dto.date);
+
+        let availability = await this.availabilityModel.findOne({ mentorId: mentorOid });
+        if (!availability) {
+            availability = new this.availabilityModel({ mentorId: mentorOid, weeklySlots: [] });
+        }
+
+        const meetingDuration = dto.meetingDuration ?? availability.meetingDuration ?? 60;
+
+        if (dto.meetingDuration != null) {
+            availability.meetingDuration = dto.meetingDuration;
+        }
+        if (dto.minSchedulingNoticeHours != null) {
+            availability.minSchedulingNoticeHours = dto.minSchedulingNoticeHours;
+        }
+        if (dto.maxBookingsPerDay != null) {
+            availability.maxBookingsPerDay = dto.maxBookingsPerDay;
+        }
+        if (dto.preferredPlatform != null) {
+            availability.preferredPlatform = dto.preferredPlatform;
+        }
+
+        await this.applyDayAvailabilityEntry(availability, mentorOid, dateKey, dto.slots, meetingDuration, {
+            unavailable: false,
+            generation: 'override',
+        });
+
+        availability.recurringExceptionDates = this.uniqPushString(
+            availability.recurringExceptionDates,
+            dateKey,
+        );
+        availability.recurringSuppressedDates = this.listWithoutString(
+            availability.recurringSuppressedDates,
+            dateKey,
+        );
+
+        if ((availability.recurringWeeklyPattern?.length ?? 0) > 0) {
+            await this.rematerializeRecurringForAvailability(availability);
+        }
+
+        await availability.save();
+        return this.getMentorAvailability(mentorId);
+    }
+
+    /** Deletes stored availability for a single date; suppressed when a recurring master exists so it is not auto-refilled. */
+    async deleteSingleDayAvailability(mentorId: string, rawDateInput: string) {
+        await this.assertMentorDirectorFieldMentorForAvailability(mentorId);
+
+        const mentorOid = new Types.ObjectId(mentorId);
+        const dateKey = this.coerceDayKeyUTC(rawDateInput);
+
+        const availability = await this.availabilityModel.findOne({ mentorId: mentorOid });
+        if (!availability) {
+            throw new NotFoundException('Mentor availability not found.');
+        }
+
+        const dayStart = new Date(`${dateKey}T00:00:00.000Z`);
+        const dayEnd = new Date(`${dateKey}T23:59:59.999Z`);
+        const bookingCount = await this.appointmentModel.countDocuments({
+            mentorId: mentorOid,
+            meetingDate: { $gte: dayStart, $lte: dayEnd },
+            status: APPOINTMENT_STATUSES.SCHEDULED,
+        });
+        if (bookingCount > 0) {
+            throw new BadRequestException(
+                'Cannot remove availability for a day that still has scheduled appointments.',
+            );
+        }
+
+        const index = availability.weeklySlots.findIndex((d) => d.date.toISOString().split('T')[0] === dateKey);
+        if (index !== -1) {
+            availability.weeklySlots.splice(index, 1);
+        }
+
+        if ((availability.recurringWeeklyPattern?.length ?? 0) > 0) {
+            availability.recurringSuppressedDates = this.uniqPushString(
+                availability.recurringSuppressedDates,
+                dateKey,
+            );
+        }
+
+        availability.recurringExceptionDates = this.listWithoutString(
+            availability.recurringExceptionDates,
+            dateKey,
+        );
+
+        await availability.save();
+
+        return { mentorId, date: dateKey, deleted: true };
     }
 
     /** Mon–Sat only, next `horizonDays` calendar days from today (UTC midnight), 9 AM–9 PM raw range per day. */
@@ -980,17 +1277,26 @@ export class AppointmentsService {
         if (!data) {
             return {
                 mentorId,
-                weeklySlots: []
+                weeklySlots: [],
+                recurringWeeklyPattern: [],
+                recurringHorizonDays: 60,
+                recurringExceptionDates: [],
+                recurringSuppressedDates: [],
             };
         }
 
         return {
             mentorId: data.mentorId,
-            weeklySlots: data.weeklySlots.map(d => ({
+            weeklySlots: data.weeklySlots.map((d) => ({
                 date: d.date,
                 rawSlots: d.rawSlots,
                 unavailable: (d as { unavailable?: boolean }).unavailable ?? false,
-            }))
+                generation: (d as { generation?: string }).generation,
+            })),
+            recurringWeeklyPattern: data.recurringWeeklyPattern ?? [],
+            recurringHorizonDays: data.recurringHorizonDays ?? 60,
+            recurringExceptionDates: data.recurringExceptionDates ?? [],
+            recurringSuppressedDates: data.recurringSuppressedDates ?? [],
         };
     }
 
@@ -1510,6 +1816,10 @@ export class AppointmentsService {
             availability.preferredPlatform = dto.preferredPlatform;
         }
 
+        if ((availability.recurringWeeklyPattern?.length ?? 0) > 0 && dto.meetingDuration != null) {
+            await this.rematerializeRecurringForAvailability(availability);
+        }
+
         await availability.save();
 
         return {
@@ -1538,18 +1848,10 @@ export class AppointmentsService {
         }
     }
 
-    private static dayKeyFromInput(dateInput: string): string {
-        const d = new Date(dateInput);
-        if (Number.isNaN(d.getTime())) {
-            throw new BadRequestException('Invalid date.');
-        }
-        return d.toISOString().split('T')[0];
-    }
-
     /** Block an entire calendar day (UTC date string) for booking. */
     async markMentorDayUnavailable(mentorId: string, dto: MentorAvailabilityDayDto) {
         await this.assertMentorDirectorFieldMentorForAvailability(mentorId);
-        const dateStr = AppointmentsService.dayKeyFromInput(dto.date);
+        const dateStr = this.coerceDayKeyUTC(dto.date);
         const mentorOid = new Types.ObjectId(mentorId);
 
         const availability = await this.availabilityModel.findOne({ mentorId: mentorOid });
@@ -1557,24 +1859,33 @@ export class AppointmentsService {
             throw new NotFoundException('Mentor availability not found.');
         }
 
+        availability.recurringExceptionDates = this.uniqPushString(availability.recurringExceptionDates, dateStr);
+        availability.recurringSuppressedDates = this.listWithoutString(
+            availability.recurringSuppressedDates,
+            dateStr,
+        );
+
         const dayStart = new Date(`${dateStr}T00:00:00.000Z`);
         const index = availability.weeklySlots.findIndex(
             w => w.date.toISOString().split('T')[0] === dateStr,
         );
 
         if (index !== -1) {
-            const day = availability.weeklySlots[index] as any;
-            day.rawSlots = [];
-            day.slots = [];
-            day.unavailable = true;
-            day.date = dayStart;
+            const slotDay = availability.weeklySlots[index];
+            slotDay.rawSlots = [];
+            slotDay.slots = [];
+            slotDay.unavailable = true;
+            slotDay.date = dayStart;
+            slotDay.generation = 'override';
         } else {
-            availability.weeklySlots.push({
+            const blocked: DayAvailability = {
                 date: dayStart,
                 rawSlots: [],
                 slots: [],
                 unavailable: true,
-            } as any);
+                generation: 'override',
+            };
+            availability.weeklySlots.push(blocked);
         }
 
         await availability.save();
@@ -1587,7 +1898,7 @@ export class AppointmentsService {
      */
     async openMentorUnavailableDay(mentorId: string, dto: OpenMentorDayDto) {
         await this.assertMentorDirectorFieldMentorForAvailability(mentorId);
-        const dateStr = AppointmentsService.dayKeyFromInput(dto.date);
+        const dateStr = this.coerceDayKeyUTC(dto.date);
         const mentorOid = new Types.ObjectId(mentorId);
 
         const existing = await this.availabilityModel.findOne({ mentorId: mentorOid }).lean();

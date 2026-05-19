@@ -151,3 +151,87 @@ export function getWeekRange(dateStr: string): Date[] {
 
     return days;
 }
+
+/** True when two half-open UTC minute intervals [start,end) on the same day overlap beyond a mere touchpoint. */
+export function rawAvailabilitiesOverlap(slotA: HourSlot, slotB: HourSlot): boolean {
+    const aStart = convertSlotToMinutes(slotA.startTime, slotA.startPeriod);
+    const aEnd = convertSlotToMinutes(slotA.endTime, slotA.endPeriod);
+    const bStart = convertSlotToMinutes(slotB.startTime, slotB.startPeriod);
+    const bEnd = convertSlotToMinutes(slotB.endTime, slotB.endPeriod);
+    return aStart < bEnd && bStart < aEnd;
+}
+
+/**
+ * Validates that raw availability windows within the same day do not overlap.
+ * Boundaries touching (ends when next starts) are allowed.
+ */
+export function validateSameDayRawSlotsNonOverlapping(slots: HourSlot[]): {
+    ok: true;
+} | {
+    ok: false;
+    message: string;
+} {
+    if (slots.length < 2) return { ok: true };
+    const sorted = [...slots].sort(
+        (a, b) => convertSlotToMinutes(a.startTime, a.startPeriod) - convertSlotToMinutes(b.startTime, b.startPeriod),
+    );
+    for (let i = 0; i < sorted.length; i += 1) {
+        for (let j = i + 1; j < sorted.length; j += 1) {
+            if (rawAvailabilitiesOverlap(sorted[i], sorted[j])) {
+                return { ok: false, message: 'Availability time windows overlap; adjust or merge ranges.' };
+            }
+        }
+    }
+    return { ok: true };
+}
+
+export function utcDateFromDateKey(dateKey: string): Date {
+    return new Date(`${dateKey}T00:00:00.000Z`);
+}
+
+export function dateKeyUtcForInput(dateInput: string): string {
+    const d = new Date(dateInput.includes('T') ? dateInput : `${dateInput}T00:00:00.000Z`);
+    if (Number.isNaN(d.getTime())) {
+        throw new Error('Invalid date.');
+    }
+    return d.toISOString().split('T')[0];
+}
+
+/** Consolidate arbitrary calendar rows into weekday → merged raw-slot lists (UTC). */
+export function consolidateTemplateSlotsByUtcWeekday(
+    rows: { date: string; slots: HourSlot[] }[],
+): Map<number, HourSlot[]> {
+    const map = new Map<number, HourSlot[]>();
+
+    for (const row of rows) {
+        const dateKey = dateKeyUtcForInput(row.date);
+        const d = utcDateFromDateKey(dateKey);
+        const weekday = d.getUTCDay();
+        const combined = [...(map.get(weekday) ?? []), ...row.slots];
+        map.set(weekday, combined);
+    }
+
+    return map;
+}
+
+export interface UtcDayCursor {
+    dateKey: string;
+    weekday: number;
+}
+
+/** Walk UTC calendar days forward from UTC today midnight. */
+export function iterateUtcDaysFromToday(horizonDays: number): UtcDayCursor[] {
+    const out: UtcDayCursor[] = [];
+    const start = new Date();
+    start.setUTCHours(0, 0, 0, 0);
+
+    for (let i = 0; i < horizonDays; i += 1) {
+        const d = new Date(start);
+        d.setUTCDate(start.getUTCDate() + i);
+        out.push({
+            dateKey: d.toISOString().split('T')[0],
+            weekday: d.getUTCDay(),
+        });
+    }
+    return out;
+}

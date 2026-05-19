@@ -24,6 +24,19 @@ export class Slot {
 
 export const SlotSchema = SchemaFactory.createForClass(Slot);
 
+/** Weekly template keyed by weekday (0=Sunday … 6=Saturday), UTC-aligned with booking dates. */
+@Schema({ _id: false })
+export class RecurringWeekdayPattern {
+    @Prop({ type: Number, required: true, min: 0, max: 6 })
+    weekday: number;
+
+    @Prop({ type: [SlotSchema], default: [] })
+    rawSlots: Slot[];
+}
+
+export const RecurringWeekdayPatternSchema =
+    SchemaFactory.createForClass(RecurringWeekdayPattern);
+
 @Schema()
 export class DayAvailability {
 
@@ -42,6 +55,14 @@ export class DayAvailability {
     /** When true, the mentor blocked the whole day (no bookable slots). */
     @Prop({ type: Boolean, default: false })
     unavailable?: boolean;
+
+    /**
+     * How this day's row was produced. Used when refreshing recurring materialization so
+     * override rows are preserved and recurring-only rows can be cleared when weekdays drop off the template.
+     * `legacy` = created before tagging existed or bulk import; not auto-pruned when the weekday leaves the recurring template.
+     */
+    @Prop({ type: String, enum: ['recurring', 'override', 'legacy'], required: false })
+    generation?: 'recurring' | 'override' | 'legacy';
 }
 
 export const DayAvailabilitySchema = SchemaFactory.createForClass(DayAvailability);
@@ -80,6 +101,31 @@ export class Availability {
         default: APPOINTMENT_PLATFORMS.ZOOM,
     })
     preferredPlatform: string;
+
+    /** Master repeating schedule (UTC weekdays). Empty when recurring is not configured. */
+    @Prop({
+        type: [RecurringWeekdayPatternSchema],
+        default: [],
+    })
+    recurringWeeklyPattern?: RecurringWeekdayPattern[];
+
+    /** How far ahead (from UTC today) auto-generated recurring days are refreshed. */
+    @Prop({ type: Number, default: 60 })
+    recurringHorizonDays?: number;
+
+    /**
+     * YYYY-MM-DD dates where recurring materialization produced no row (removed by user /
+     * not refilled automatically while the weekday still appears in recurringWeeklyPattern).
+     */
+    @Prop({ type: [String], default: [] })
+    recurringSuppressedDates?: string[];
+
+    /**
+     * YYYY-MM-DD dates with custom edits (different raw windows, reopened day, unavailable, etc.);
+     * recurring refresh skips these dates.
+     */
+    @Prop({ type: [String], default: [] })
+    recurringExceptionDates?: string[];
 }
 
 export const AvailabilitySchema =
