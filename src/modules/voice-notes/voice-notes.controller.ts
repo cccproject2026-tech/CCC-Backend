@@ -27,7 +27,7 @@ export class VoiceNotesController {
         @Body() dto: CreateVoiceNoteDto,
         @CurrentUser() user: { userId: string },
     ) {
-        const data = await this.voiceNotesService.upload(user, audio, dto.title);
+        const data = await this.voiceNotesService.upload(user, audio, dto);
         return { success: true, data };
     }
 

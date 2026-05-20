@@ -16,6 +16,9 @@ export const ALLOWED_AUDIO_MIME_TYPES = new Set([
     'audio/x-wav',
     'application/ogg',
     'video/3gpp',
+    // Browser MediaRecorder (audio-only tracks may use video/webm container)
+    'video/webm',
+    'audio/aac',
 ]);
 
 /** File extensions (lowercase, without dot) accepted when MIME is missing or wrong. */
@@ -46,7 +49,12 @@ export const MIME_TO_EXTENSION: Record<string, string> = {
     'video/3gpp': '3gp',
     'audio/quicktime': 'm4a',
     'video/mp4': 'mp4',
+    'video/webm': 'webm',
+    'audio/aac': 'm4a',
 };
+
+/** Future-safe max recording duration (seconds). Not enforced in Phase 2. */
+export const MAX_RECORDING_DURATION_SECONDS_PLACEHOLDER = 3600;
 
 export function normalizeMimeType(mimeType: string | undefined): string {
     return (mimeType ?? '').split(';')[0].trim().toLowerCase();

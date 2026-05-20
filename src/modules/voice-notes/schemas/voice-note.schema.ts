@@ -44,6 +44,15 @@ export class VoiceNote {
     @Prop({ type: Number, required: true })
     fileSizeBytes: number;
 
+    @Prop({ type: Number, default: null })
+    recordingDurationSeconds?: number;
+
+    @Prop({ type: String, default: null })
+    recordingDeviceType?: string;
+
+    @Prop({ type: String, default: null })
+    recordingPlatform?: string;
+
     @Prop({
         type: String,
         enum: VOICE_NOTE_STATUSES,

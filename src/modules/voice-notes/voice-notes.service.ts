@@ -15,9 +15,15 @@ import {
     VoiceNoteListItemDto,
     VoiceNoteUploadResponseDto,
 } from './dto/voice-note-response.dto';
-import { VoiceNoteStatus } from './interfaces/voice-note-status.interface';
+import {
+    VoiceNoteSource,
+    VoiceNoteStatus,
+} from './interfaces/voice-note-status.interface';
+import { CreateVoiceNoteDto } from './dto/create-voice-note.dto';
 import {
     isAllowedAudioUpload,
+    MAX_RECORDING_DURATION_SECONDS_PLACEHOLDER,
+    normalizeMimeType,
     resolveAudioExtension,
 } from './voice-note-audio.constants';
 
@@ -38,30 +44,42 @@ export class VoiceNotesService {
     async upload(
         user: { userId: string },
         file: Express.Multer.File,
-        title?: string,
+        dto: CreateVoiceNoteDto = {},
     ): Promise<VoiceNoteUploadResponseDto> {
-        this.validateAudioFile(file);
+        const source = this.resolveSource(dto.source);
+        this.validateAudioFile(file, source, dto);
+        this.logDurationPlaceholder(dto.recordingDurationSeconds, source);
 
         const userId = user.userId;
         const extension = resolveAudioExtension(file.mimetype, file.originalname);
         const timestamp = Date.now();
         const s3Key = `voice-notes/${userId}/${timestamp}.${extension}`;
+        const normalizedMime = normalizeMimeType(file.mimetype) || file.mimetype;
 
         const audioUrl = await this.s3Service.uploadFile(
             s3Key,
             file.buffer,
-            file.mimetype,
+            normalizedMime,
         );
 
         const note = await this.voiceNoteModel.create({
             userId: new Types.ObjectId(userId),
-            title: title?.trim() || 'Untitled voice note',
-            source: 'upload',
+            title: titleFromDto(dto.title, source),
+            source,
             audioUrl,
-            audioMimeType: file.mimetype,
+            audioMimeType: normalizedMime,
             fileSizeBytes: file.size,
+            recordingDurationSeconds: dto.recordingDurationSeconds ?? null,
+            recordingDeviceType: dto.recordingDeviceType?.trim() || null,
+            recordingPlatform: dto.recordingPlatform?.trim() || null,
             status: 'pending',
         });
+
+        this.logger.log(
+            `Voice note created: id=${note._id}, source=${source}, platform=${dto.recordingPlatform ?? 'n/a'}, ` +
+            `device=${dto.recordingDeviceType ?? 'n/a'}, duration=${dto.recordingDurationSeconds ?? 'n/a'}s, ` +
+            `format=${normalizedMime}, extension=${extension}, size=${file.size}`,
+        );
 
         void this.processVoiceNote(note._id.toString(), file.buffer).catch((error) => {
             this.logger.error(
@@ -73,6 +91,7 @@ export class VoiceNotesService {
             id: note._id.toString(),
             status: note.status as VoiceNoteStatus,
             audioUrl: note.audioUrl,
+            source: note.source as VoiceNoteSource,
         };
     }
 
@@ -177,13 +196,40 @@ export class VoiceNotesService {
         );
     }
 
-    private validateAudioFile(file: Express.Multer.File | undefined): void {
+    private resolveSource(source?: string): VoiceNoteSource {
+        return source === 'recording' ? 'recording' : 'upload';
+    }
+
+    private logDurationPlaceholder(
+        recordingDurationSeconds: number | undefined,
+        source: VoiceNoteSource,
+    ): void {
+        if (recordingDurationSeconds === undefined) {
+            return;
+        }
+
+        if (recordingDurationSeconds > MAX_RECORDING_DURATION_SECONDS_PLACEHOLDER) {
+            this.logger.warn(
+                `Voice note ${source} reports duration ${recordingDurationSeconds}s ` +
+                `(placeholder max ${MAX_RECORDING_DURATION_SECONDS_PLACEHOLDER}s; rejection not enabled)`,
+            );
+        }
+    }
+
+    private validateAudioFile(
+        file: Express.Multer.File | undefined,
+        source: VoiceNoteSource,
+        dto: CreateVoiceNoteDto,
+    ): void {
         if (!file) {
             throw new BadRequestException('Audio file is required');
         }
 
+        const format = normalizeMimeType(file.mimetype) || file.mimetype || 'unknown';
         this.logger.log(
-            `Voice note upload: mimetype="${file.mimetype}", originalname="${file.originalname}", size=${file.size}`,
+            `Voice note upload: source=${source}, platform=${dto.recordingPlatform ?? 'n/a'}, ` +
+            `device=${dto.recordingDeviceType ?? 'n/a'}, duration=${dto.recordingDurationSeconds ?? 'n/a'}s, ` +
+            `format=${format}, originalname="${file.originalname}", size=${file.size}`,
         );
 
         if (!isAllowedAudioUpload(file.mimetype, file.originalname)) {
@@ -218,10 +264,14 @@ export class VoiceNotesService {
         return {
             id: note._id.toString(),
             title: note.title ?? '',
+            source: (note.source ?? 'upload') as VoiceNoteSource,
             status: note.status as VoiceNoteStatus,
             audioUrl: note.audioUrl,
             transcript: note.transcript ?? undefined,
             transcriptSummary: note.transcriptSummary ?? undefined,
+            recordingDurationSeconds: note.recordingDurationSeconds ?? undefined,
+            recordingDeviceType: note.recordingDeviceType ?? undefined,
+            recordingPlatform: note.recordingPlatform ?? undefined,
             createdAt: note.createdAt,
         };
     }
@@ -230,10 +280,21 @@ export class VoiceNotesService {
         return {
             id: note._id.toString(),
             title: note.title ?? '',
+            source: (note.source ?? 'upload') as VoiceNoteSource,
             status: note.status as VoiceNoteStatus,
             audioUrl: note.audioUrl,
+            recordingDurationSeconds: note.recordingDurationSeconds ?? undefined,
+            recordingPlatform: note.recordingPlatform ?? undefined,
             createdAt: note.createdAt,
             updatedAt: note.updatedAt,
         };
     }
+}
+
+function titleFromDto(title: string | undefined, source: VoiceNoteSource): string {
+    const trimmed = title?.trim();
+    if (trimmed) {
+        return trimmed;
+    }
+    return source === 'recording' ? 'Voice recording' : 'Untitled voice note';
 }
