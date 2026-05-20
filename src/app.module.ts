@@ -22,6 +22,7 @@ import { S3Module } from './modules/s3/s3.module';
 import { SearchModule } from './modules/search/search.module';
 import { ZoomModule } from './modules/zoom/zoom.module';
 import { FirebaseModule } from './modules/firebase/firebase.module';
+import { MentoringSessionsModule } from './modules/mentoring-sessions/mentoring-sessions.module';
 
 @Module({
   imports: [
@@ -69,6 +70,7 @@ import { FirebaseModule } from './modules/firebase/firebase.module';
     ProductsServicesModule,
     SearchModule,
     FirebaseModule,
+    MentoringSessionsModule,
   ],
 
   controllers: [],
