@@ -4,7 +4,15 @@ import { CreateAppointmentDto, AppointmentResponseDto, UpdateAppointmentDto, Can
 import { BaseResponse } from 'src/shared/interfaces/base-response.interface';
 import { createHmac } from 'crypto';
 import { ConfigService } from '@nestjs/config';
-import { AvailabilityDto, DeleteAvailabilitySlotDto, MentorAvailabilityDayDto, OpenMentorDayDto, UpdateMentorAvailabilitySettingsDto } from './dto/availability.dto';
+import {
+    AvailabilityDto,
+    CreateRecurringAvailabilityDto,
+    DeleteAvailabilitySlotDto,
+    MentorAvailabilityDayDto,
+    OpenMentorDayDto,
+    UpdateMentorAvailabilitySettingsDto,
+    UpsertSingleDayAvailabilityDto,
+} from './dto/availability.dto';
 import { ParseMongoIdPipe } from 'src/common/pipes/parse-mongo-id.pipe';
 
 @Controller('appointments')
@@ -93,15 +101,51 @@ export class AppointmentsController {
         };
     }
 
+    @Post('availability/recurring')
+    async createRecurringAvailability(
+        @Body() dto: CreateRecurringAvailabilityDto,
+    ): Promise<BaseResponse<unknown>> {
+        const data = await this.appointmentsService.createRecurringWeeklyAvailability(dto);
+        return {
+            success: true,
+            message: 'Recurring weekly availability saved and materialized for the configured horizon.',
+            data,
+        };
+    }
+
+    @Patch('availability/:mentorId/day')
+    async upsertSingleDayAvailability(
+        @Param('mentorId', ParseMongoIdPipe) mentorId: string,
+        @Body() dto: UpsertSingleDayAvailabilityDto,
+    ): Promise<BaseResponse<unknown>> {
+        const data = await this.appointmentsService.upsertSingleDayAvailability(mentorId, dto);
+        return {
+            success: true,
+            message: 'Single-day availability updated.',
+            data,
+        };
+    }
+
+    @Delete('availability/:mentorId/day/:date')
+    async deleteSingleDayAvailability(
+        @Param('mentorId', ParseMongoIdPipe) mentorId: string,
+        @Param('date') date: string,
+    ): Promise<BaseResponse<unknown>> {
+        const data = await this.appointmentsService.deleteSingleDayAvailability(mentorId, date);
+        return {
+            success: true,
+            message: 'Availability removed for the selected date.',
+            data,
+        };
+    }
+
     @Post('availability')
-    async upsertAvailability(
-        @Body() dto: AvailabilityDto
-    ): Promise<BaseResponse<any>> {
+    async upsertAvailability(@Body() dto: AvailabilityDto): Promise<BaseResponse<unknown>> {
         const data = await this.appointmentsService.upsertAvailability(dto);
         return {
             success: true,
-            message: "Weekly availability updated.",
-            data
+            message: 'Weekly availability updated.',
+            data,
         };
     }
 

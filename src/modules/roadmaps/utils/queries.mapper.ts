@@ -16,6 +16,9 @@ const toQueryItemResponseDto = (item: QueryItemDocument | any): QueryItemRespons
         repliedDate: item.repliedDate,
         repliedMentorId: mentorDetails as PopulatedUserResponseDto,
         status: item.status,
+        nestedRoadMapItemId: item.nestedRoadMapItemId
+            ? ((item.nestedRoadMapItemId as Types.ObjectId)?.toString?.() ?? String(item.nestedRoadMapItemId))
+            : null,
     };
 };
 

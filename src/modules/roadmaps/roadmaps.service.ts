@@ -239,9 +239,23 @@ export class RoadMapsService {
         return toCommentsThreadResponseDto(updatedThread as any);
     }
 
-    async getAllQueryThreads(roadMapId: string, userId: string, status?: string): Promise<QueriesThreadResponseDto[]> {
+    async getAllQueryThreads(
+        roadMapId: string,
+        userId: string,
+        status?: string,
+        nestedRoadMapItemId?: string,
+    ): Promise<QueriesThreadResponseDto[]> {
         const roadMapObjectId = new Types.ObjectId(roadMapId);
         const userObjectId = new Types.ObjectId(userId);
+
+        let nestedFilterId: Types.ObjectId | undefined;
+        if (nestedRoadMapItemId != null && String(nestedRoadMapItemId).trim() !== '') {
+            const trimmed = String(nestedRoadMapItemId).trim();
+            if (!Types.ObjectId.isValid(trimmed)) {
+                throw new BadRequestException('Invalid nestedRoadMapItemId.');
+            }
+            nestedFilterId = new Types.ObjectId(trimmed);
+        }
 
         const pipeline: any[] = [
             { $match: { roadMapId: roadMapObjectId, userId: userObjectId } },
@@ -296,7 +310,19 @@ export class RoadMapsService {
         ];
 
         const threads = await this.queriesModel.aggregate(pipeline).exec();
-        return threads.map(toQueriesThreadResponseDto);
+        let mapped = threads.map(toQueriesThreadResponseDto);
+
+        if (nestedFilterId) {
+            const nid = nestedFilterId.toString();
+            mapped = mapped
+                .map((t) => ({
+                    ...t,
+                    queries: t.queries.filter((q) => q.nestedRoadMapItemId === nid),
+                }))
+                .filter((t) => t.queries.length > 0);
+        }
+
+        return mapped;
     }
 
     async addQuery(roadMapId: string, dto: CreateQueryDto): Promise<QueriesThreadResponseDto> {
@@ -307,6 +333,9 @@ export class RoadMapsService {
             actualQueryText: dto.actualQueryText,
             createdDate: new Date(),
             status: QUERY_STATUSES.PENDING,
+            ...(dto.nestedRoadMapItemId?.trim()
+                ? { nestedRoadMapItemId: new Types.ObjectId(dto.nestedRoadMapItemId.trim()) }
+                : {}),
         } as QueryItem;
 
         const updatedThread = await this.queriesModel.findOneAndUpdate(
@@ -449,7 +478,6 @@ export class RoadMapsService {
                     $pull: {
                         queries: {
                             _id: queryItemObjectId,
-                            status: QUERY_STATUSES.PENDING,
                         },
                     },
                 },

@@ -200,6 +200,20 @@ export class RoadMapsController {
         };
     }
 
+    /** Path alias identical to POST `:roadMapId/queries` (helps clients that nest under `/pastor/`). */
+    @Post('pastor/:roadMapId/queries')
+    async addQueryPastorPath(
+        @Param('roadMapId', ParseMongoIdPipe) roadMapId: string,
+        @Body() dto: CreateQueryDto,
+    ): Promise<BaseResponse<QueriesThreadResponseDto>> {
+        const thread = await this.roadMapsService.addQuery(roadMapId, dto);
+        return {
+            success: true,
+            message: 'Query added and thread updated successfully',
+            data: thread,
+        };
+    }
+
     @Post(':roadMapId/queries')
     async addQuery(
         @Param('roadMapId', ParseMongoIdPipe) roadMapId: string,
@@ -213,21 +227,57 @@ export class RoadMapsController {
         };
     }
 
-    @Get(':roadMapId/queries')
-    async getAllQueryThreads(
+    @Get('pastor/:roadMapId/queries')
+    async getAllQueryThreadsPastorPath(
         @Param('roadMapId', ParseMongoIdPipe) roadMapId: string,
         @Query('userId', ParseMongoIdPipe) userId: string,
         @Query('status') status?: string,
+        @Query('nestedRoadMapItemId') nestedRoadMapItemId?: string,
     ): Promise<BaseResponse<QueriesThreadResponseDto[]>> {
         const threads = await this.roadMapsService.getAllQueryThreads(
             roadMapId,
             userId,
             status,
+            nestedRoadMapItemId,
         );
         return {
             success: true,
             message: 'Query threads fetched successfully',
             data: threads,
+        };
+    }
+
+    @Get(':roadMapId/queries')
+    async getAllQueryThreads(
+        @Param('roadMapId', ParseMongoIdPipe) roadMapId: string,
+        @Query('userId', ParseMongoIdPipe) userId: string,
+        @Query('status') status?: string,
+        @Query('nestedRoadMapItemId') nestedRoadMapItemId?: string,
+    ): Promise<BaseResponse<QueriesThreadResponseDto[]>> {
+        const threads = await this.roadMapsService.getAllQueryThreads(
+            roadMapId,
+            userId,
+            status,
+            nestedRoadMapItemId,
+        );
+        return {
+            success: true,
+            message: 'Query threads fetched successfully',
+            data: threads,
+        };
+    }
+
+    @Patch('pastor/:roadMapId/queries/:queryItemId/reply')
+    async replyQueryPastorPath(
+        @Param('roadMapId', ParseMongoIdPipe) roadMapId: string,
+        @Param('queryItemId', ParseMongoIdPipe) queryItemId: string,
+        @Body() dto: ReplyQueryDto,
+    ): Promise<BaseResponse<QueriesThreadResponseDto>> {
+        const thread = await this.roadMapsService.replyQuery(roadMapId, queryItemId, dto);
+        return {
+            success: true,
+            message: 'Query replied successfully',
+            data: thread,
         };
     }
 
@@ -249,6 +299,20 @@ export class RoadMapsController {
         };
     }
 
+    @Patch('pastor/:roadMapId/queries/:queryItemId')
+    async updateQueryPastorPath(
+        @Param('roadMapId', ParseMongoIdPipe) roadMapId: string,
+        @Param('queryItemId', ParseMongoIdPipe) queryItemId: string,
+        @Body() dto: UpdateQueryDto,
+    ): Promise<BaseResponse<QueriesThreadResponseDto>> {
+        const thread = await this.roadMapsService.updateQuery(roadMapId, queryItemId, dto);
+        return {
+            success: true,
+            message: 'Query updated successfully',
+            data: thread,
+        };
+    }
+
     @Patch(':roadMapId/queries/:queryItemId')
     async updateQuery(
         @Param('roadMapId', ParseMongoIdPipe) roadMapId: string,
@@ -259,6 +323,20 @@ export class RoadMapsController {
         return {
             success: true,
             message: 'Query updated successfully',
+            data: thread,
+        };
+    }
+
+    @Delete('pastor/:roadMapId/queries/:queryItemId')
+    async deleteQueryPastorPath(
+        @Param('roadMapId', ParseMongoIdPipe) roadMapId: string,
+        @Param('queryItemId', ParseMongoIdPipe) queryItemId: string,
+        @Query('userId', ParseMongoIdPipe) userId: string,
+    ): Promise<BaseResponse<QueriesThreadResponseDto>> {
+        const thread = await this.roadMapsService.deleteQuery(roadMapId, queryItemId, userId);
+        return {
+            success: true,
+            message: 'Query deleted successfully',
             data: thread,
         };
     }

@@ -1,4 +1,4 @@
-import { ArrayMinSize, IsArray, IsDateString, IsEnum, IsIn, IsInt, IsMongoId, IsNumber, IsOptional, IsString, Matches, Max, Min, ValidateNested } from 'class-validator';
+import { ArrayMinSize, IsArray, IsBoolean, IsDateString, IsEnum, IsIn, IsInt, IsMongoId, IsNumber, IsOptional, IsString, Matches, Max, Min, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 import { VALID_APPOINTMENT_PLATFORMS } from 'src/common/constants/status.constants';
 
@@ -82,6 +82,77 @@ export class OpenMentorDayDto {
     @ValidateNested({ each: true })
     @Type(() => TimeSlotDto)
     slots!: TimeSlotDto[];
+}
+
+/**
+ * Saves a repeating weekly master from one concrete week of selections.
+ * Each `templateWeeklySlots[].date` weekday is extracted; overlapping dates for the same weekday merge windows.
+ */
+export class CreateRecurringAvailabilityDto {
+    @IsMongoId()
+    mentorId!: string;
+
+    @IsArray()
+    @ArrayMinSize(1)
+    @ValidateNested({ each: true })
+    @Type(() => DayAvailabilityDto)
+    templateWeeklySlots!: DayAvailabilityDto[];
+
+    @IsOptional()
+    @Type(() => Number)
+    @IsInt()
+    @Min(7)
+    @Max(120)
+    horizonDays?: number;
+
+    /** When true, clears exception/suppression lists before materializing so all days follow the new template only. */
+    @IsOptional()
+    @IsBoolean()
+    clearPersonalizations?: boolean;
+
+    @IsOptional()
+    @IsNumber()
+    meetingDuration?: number;
+
+    @IsOptional()
+    @IsNumber()
+    minSchedulingNoticeHours?: number;
+
+    @IsOptional()
+    @IsNumber()
+    maxBookingsPerDay?: number;
+
+    @IsOptional()
+    @IsIn(VALID_APPOINTMENT_PLATFORMS)
+    preferredPlatform?: string;
+}
+
+/** Upsert slots for exactly one UTC calendar day — marks date as recurring exception (immune to template refresh). */
+export class UpsertSingleDayAvailabilityDto {
+    @IsDateString()
+    date!: string;
+
+    @IsArray()
+    @ArrayMinSize(1)
+    @ValidateNested({ each: true })
+    @Type(() => TimeSlotDto)
+    slots!: TimeSlotDto[];
+
+    @IsOptional()
+    @IsNumber()
+    meetingDuration?: number;
+
+    @IsOptional()
+    @IsNumber()
+    minSchedulingNoticeHours?: number;
+
+    @IsOptional()
+    @IsNumber()
+    maxBookingsPerDay?: number;
+
+    @IsOptional()
+    @IsIn(VALID_APPOINTMENT_PLATFORMS)
+    preferredPlatform?: string;
 }
 
 /** Patch mentor-level booking rules (duration, notice, caps, platform). Send at least one field. */

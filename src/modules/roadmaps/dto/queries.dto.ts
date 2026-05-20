@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsMongoId } from 'class-validator';
 import { PopulatedUserResponseDto } from './populated-response.dto';
 
 export class CreateQueryDto {
@@ -9,6 +9,11 @@ export class CreateQueryDto {
     @IsNotEmpty()
     @IsString()
     userId: string;
+
+    /** Scoped to a nested roadmap task; recommended for pastor/mentor task views. */
+    @IsOptional()
+    @IsMongoId()
+    nestedRoadMapItemId?: string;
 }
 
 export class ReplyQueryDto {
@@ -40,6 +45,7 @@ export class QueryItemResponseDto {
     repliedDate?: Date;
     repliedMentorId?: PopulatedUserResponseDto;
     status: 'pending' | 'answered';
+    nestedRoadMapItemId?: string | null;
 }
 
 export class QueriesThreadResponseDto {
