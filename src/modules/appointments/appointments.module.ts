@@ -25,6 +25,6 @@ import { AppointmentsCronService } from './appointments.cron';
     ],
     controllers: [AppointmentsController],
     providers: [AppointmentsService, MailerService, TranscriptSummaryService, AppointmentsCronService],
-    exports: [AppointmentsService],
+    exports: [AppointmentsService, TranscriptSummaryService],
 })
 export class AppointmentsModule { }

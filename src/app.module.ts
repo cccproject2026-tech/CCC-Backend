@@ -23,6 +23,7 @@ import { SearchModule } from './modules/search/search.module';
 import { ZoomModule } from './modules/zoom/zoom.module';
 import { FirebaseModule } from './modules/firebase/firebase.module';
 import { MentoringSessionsModule } from './modules/mentoring-sessions/mentoring-sessions.module';
+import { VoiceNotesModule } from './modules/voice-notes/voice-notes.module';
 
 @Module({
   imports: [
@@ -71,6 +72,7 @@ import { MentoringSessionsModule } from './modules/mentoring-sessions/mentoring-
     SearchModule,
     FirebaseModule,
     MentoringSessionsModule,
+    VoiceNotesModule,
   ],
 
   controllers: [],

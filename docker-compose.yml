@@ -138,6 +138,11 @@ services:
       SUMMARY_MODEL_ID: ${SUMMARY_MODEL_ID:-gpt-4.1-mini}
       SUMMARY_MODEL_TIMEOUT_MS: ${SUMMARY_MODEL_TIMEOUT_MS:-120000}
       SUMMARY_MODEL_RETRIES: ${SUMMARY_MODEL_RETRIES:-1}
+
+      # OpenAI Whisper (voice notes transcription)
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENAI_WHISPER_MODEL: ${OPENAI_WHISPER_MODEL:-whisper-1}
+      OPENAI_WHISPER_TIMEOUT_MS: ${OPENAI_WHISPER_TIMEOUT_MS:-120000}
     depends_on:
       transcript-summary:
         condition: service_healthy

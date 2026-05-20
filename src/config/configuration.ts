@@ -56,4 +56,9 @@ export default () => ({
         chunkChars: parseInt(process.env.SUMMARY_CHUNK_CHARS ?? '6000', 10),
         maxNewTokens: parseInt(process.env.SUMMARY_MODEL_MAX_NEW_TOKENS ?? '512', 10),
     },
+    openai: {
+        apiKey: process.env.OPENAI_API_KEY,
+        whisperModel: process.env.OPENAI_WHISPER_MODEL || 'whisper-1',
+        whisperTimeoutMs: parseInt(process.env.OPENAI_WHISPER_TIMEOUT_MS ?? '120000', 10),
+    },
 });
