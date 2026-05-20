@@ -1,15 +1,12 @@
 import { Injectable, Logger, UnprocessableEntityException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
-const WHISPER_API_URL = 'https://api.openai.com/v1/audio/transcriptions';
+import {
+    normalizeMimeType,
+    resolveAudioExtension,
+} from './voice-note-audio.constants';
 
-const MIME_TO_EXTENSION: Record<string, string> = {
-    'audio/mpeg': 'mp3',
-    'audio/mp4': 'mp4',
-    'audio/wav': 'wav',
-    'audio/webm': 'webm',
-    'audio/x-m4a': 'm4a',
-};
+const WHISPER_API_URL = 'https://api.openai.com/v1/audio/transcriptions';
 
 @Injectable()
 export class WhisperTranscriptionService {
@@ -67,8 +64,13 @@ export class WhisperTranscriptionService {
         originalFilename: string | undefined,
         timeoutMs: number,
     ): Promise<string> {
-        const extension = MIME_TO_EXTENSION[mimeType] ?? 'audio';
-        const filename = originalFilename?.trim() || `audio.${extension}`;
+        const filename =
+            originalFilename?.trim() ||
+            `audio.${resolveAudioExtension(mimeType)}`;
+
+        this.logger.debug(
+            `Whisper request: mime="${mimeType}" (normalized="${normalizeMimeType(mimeType)}"), filename="${filename}"`,
+        );
 
         const formData = new FormData();
         const blob = new Blob([new Uint8Array(audioBuffer)], { type: mimeType });

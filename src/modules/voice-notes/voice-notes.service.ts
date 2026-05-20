@@ -16,24 +16,12 @@ import {
     VoiceNoteUploadResponseDto,
 } from './dto/voice-note-response.dto';
 import { VoiceNoteStatus } from './interfaces/voice-note-status.interface';
-
-const ALLOWED_AUDIO_MIME_TYPES = [
-    'audio/mpeg',
-    'audio/mp4',
-    'audio/wav',
-    'audio/webm',
-    'audio/x-m4a',
-] as const;
+import {
+    isAllowedAudioUpload,
+    resolveAudioExtension,
+} from './voice-note-audio.constants';
 
 const MAX_AUDIO_SIZE_BYTES = 25 * 1024 * 1024;
-
-const MIME_TO_EXTENSION: Record<string, string> = {
-    'audio/mpeg': 'mp3',
-    'audio/mp4': 'mp4',
-    'audio/wav': 'wav',
-    'audio/webm': 'webm',
-    'audio/x-m4a': 'm4a',
-};
 
 @Injectable()
 export class VoiceNotesService {
@@ -55,7 +43,7 @@ export class VoiceNotesService {
         this.validateAudioFile(file);
 
         const userId = user.userId;
-        const extension = MIME_TO_EXTENSION[file.mimetype] ?? 'bin';
+        const extension = resolveAudioExtension(file.mimetype, file.originalname);
         const timestamp = Date.now();
         const s3Key = `voice-notes/${userId}/${timestamp}.${extension}`;
 
@@ -122,6 +110,7 @@ export class VoiceNotesService {
             const transcript = await this.whisperTranscriptionService.transcribeAudio(
                 audioBuffer,
                 note.audioMimeType,
+                `audio.${resolveAudioExtension(note.audioMimeType)}`,
             );
             const transcriptSavedAt = new Date();
 
@@ -193,9 +182,13 @@ export class VoiceNotesService {
             throw new BadRequestException('Audio file is required');
         }
 
-        if (!ALLOWED_AUDIO_MIME_TYPES.includes(file.mimetype as (typeof ALLOWED_AUDIO_MIME_TYPES)[number])) {
+        this.logger.log(
+            `Voice note upload: mimetype="${file.mimetype}", originalname="${file.originalname}", size=${file.size}`,
+        );
+
+        if (!isAllowedAudioUpload(file.mimetype, file.originalname)) {
             throw new BadRequestException(
-                'Invalid audio format. Allowed: MPEG, MP4, WAV, WebM, M4A',
+                'Invalid audio format. Allowed: MP3, WAV, M4A, WebM, OGG, Opus, MP4, 3GP, and common mobile recordings',
             );
         }
 
