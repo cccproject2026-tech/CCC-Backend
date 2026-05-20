@@ -26,6 +26,10 @@ export class QueryItem {
 
     @Prop({ enum: ['pending', 'answered'], default: 'pending' })
     status: 'pending' | 'answered';
+
+    /** Nested roadmap step/task this query belongs to (optional for legacy docs). */
+    @Prop({ type: Types.ObjectId })
+    nestedRoadMapItemId?: Types.ObjectId;
 }
 
 export const QueryItemSchema = SchemaFactory.createForClass(QueryItem);
