@@ -11,6 +11,7 @@ import { ZoomModule } from '../zoom/zoom.module';
 import { MailerService } from '../../common/utils/mail.util';
 import { TranscriptSummaryService } from './transcript-summary.service';
 import { AppointmentsCronService } from './appointments.cron';
+import { GoogleCalendarModule } from '../google-calendar/google-calendar.module';
 
 @Module({
     imports: [
@@ -22,6 +23,7 @@ import { AppointmentsCronService } from './appointments.cron';
         HomeModule,
         ZoomModule,
         ConfigModule,
+        GoogleCalendarModule,
     ],
     controllers: [AppointmentsController],
     providers: [AppointmentsService, MailerService, TranscriptSummaryService, AppointmentsCronService],

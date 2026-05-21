@@ -215,12 +215,13 @@ export class AppointmentsController {
     async getMonthly(
         @Param('mentorId') mentorId: string,
         @Query('year') year: string,
-        @Query('month') month: string
+        @Query('month') month: string,
+        @Query('participantUserId') participantUserId?: string,
     ) {
         const y = Number(year);
         const m = Number(month) - 1;
 
-        const data = await this.appointmentsService.getMonthlyAvailability(mentorId, y, m);
+        const data = await this.appointmentsService.getMonthlyAvailability(mentorId, y, m, participantUserId);
 
         return {
             success: true,
@@ -233,6 +234,7 @@ export class AppointmentsController {
     async getWeeklyAvailability(
         @Param('mentorId') mentorId: string,
         @Query('date') date: string,
+        @Query('participantUserId') participantUserId?: string,
     ): Promise<BaseResponse<any>> {
         if (!date) {
             throw new BadRequestException('date query param is required');
@@ -242,6 +244,7 @@ export class AppointmentsController {
             await this.appointmentsService.getWeeklyAvailabilityByDate(
                 mentorId,
                 date,
+                participantUserId,
             );
 
         return {

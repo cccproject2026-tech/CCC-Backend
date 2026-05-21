@@ -33,6 +33,11 @@ import { ZoomService } from '../zoom/zoom.service';
 import { MailerService } from '../../common/utils/mail.util';
 import { TranscriptSummaryService } from './transcript-summary.service';
 import { AssessmentAssigned, AssessmentAssignedDocument } from '../assessment/schemas/assessment_assigned';
+import {
+    GoogleCalendarService,
+    subtractIntervalFromBusyIntervals,
+    intervalOverlapsBusy,
+} from '../google-calendar/google-calendar.service';
 
 @Injectable()
 export class AppointmentsService {
@@ -46,6 +51,7 @@ export class AppointmentsService {
         private readonly zoomService: ZoomService,
         private readonly mailerService: MailerService,
         private readonly transcriptSummaryService: TranscriptSummaryService,
+        private readonly googleCalendarService: GoogleCalendarService,
     ) { }
 
     private readonly userSelect = 'firstName lastName email phoneNumber profilePicture role roleId status';
@@ -115,6 +121,193 @@ export class AppointmentsService {
             return dateKeyUtcForInput(dateInput);
         } catch {
             throw new BadRequestException('Invalid date.');
+        }
+    }
+
+    /** Blocks booking when mentor or pastor primary calendars report busy (live Google query). */
+    private async assertParticipantsGoogleFree(
+        mentorIdStr: string,
+        pastorUserIdStr: string,
+        start: Date,
+        end: Date,
+        excludeCurrentAppointment?: { meetingDate: Date; endTime: Date },
+    ): Promise<void> {
+        let mentorBusy = await this.googleCalendarService.listBusyIntervals(mentorIdStr, start, end);
+        let pastorBusy = await this.googleCalendarService.listBusyIntervals(pastorUserIdStr, start, end);
+
+        if (excludeCurrentAppointment) {
+            const gap = {
+                start: excludeCurrentAppointment.meetingDate,
+                end: excludeCurrentAppointment.endTime,
+            };
+            mentorBusy = subtractIntervalFromBusyIntervals(mentorBusy, gap);
+            pastorBusy = subtractIntervalFromBusyIntervals(pastorBusy, gap);
+        }
+
+        if (intervalOverlapsBusy(start, end, mentorBusy)) {
+            throw new BadRequestException(
+                'Selected time conflicts with external events on the mentor Google Calendar.',
+            );
+        }
+        if (intervalOverlapsBusy(start, end, pastorBusy)) {
+            throw new BadRequestException(
+                'Selected time conflicts with external events on the participant Google Calendar.',
+            );
+        }
+    }
+
+    /** Filters hourly mentor slots against Google Calendar busy ranges (always mentor; optionally pastor). */
+    private async filterSlotsAgainstGoogleCalendar(
+        mentorIdStr: string,
+        participantUserIdStr: string | undefined,
+        dateStr: string,
+        slots: HourSlot[],
+        durationMinutes: number,
+        excludeAppointment?: { meetingDate: Date; endTime: Date },
+    ): Promise<HourSlot[]> {
+        if (!slots.length) return [];
+
+        const rangeStart = new Date(`${dateStr}T00:00:00.000Z`);
+        const rangeEnd = new Date(`${dateStr}T23:59:59.999Z`);
+        const scanEnd = new Date(rangeEnd.getTime() + durationMinutes * 60000);
+
+        let mentorBusy = await this.googleCalendarService.listBusyIntervals(
+            mentorIdStr,
+            rangeStart,
+            scanEnd,
+        );
+
+        let pastorBusy =
+            participantUserIdStr && Types.ObjectId.isValid(participantUserIdStr)
+                ? await this.googleCalendarService.listBusyIntervals(
+                      participantUserIdStr,
+                      rangeStart,
+                      scanEnd,
+                  )
+                : [];
+
+        if (excludeAppointment) {
+            const gap = { start: excludeAppointment.meetingDate, end: excludeAppointment.endTime };
+            mentorBusy = subtractIntervalFromBusyIntervals(mentorBusy, gap);
+            pastorBusy = subtractIntervalFromBusyIntervals(pastorBusy, gap);
+        }
+
+        return slots.filter((slot) => {
+            const slotStart = buildSlotDate(dateStr, slot);
+            const slotEnd = new Date(slotStart.getTime() + durationMinutes * 60000);
+            if (intervalOverlapsBusy(slotStart, slotEnd, mentorBusy)) return false;
+            if (
+                participantUserIdStr &&
+                Types.ObjectId.isValid(participantUserIdStr) &&
+                intervalOverlapsBusy(slotStart, slotEnd, pastorBusy)
+            ) {
+                return false;
+            }
+            return true;
+        });
+    }
+
+    private async syncGoogleCalendarAfterBooking(params: {
+        appointmentId: Types.ObjectId;
+        mentorId: string;
+        userId: string;
+        start: Date;
+        end: Date;
+        topic: string;
+        description?: string;
+    }): Promise<void> {
+        const { appointmentId, mentorId, userId, start, end, topic, description } = params;
+        const ext = { cccAppointmentId: appointmentId.toString() };
+
+        try {
+            const [mentorEv, userEv] = await Promise.all([
+                this.googleCalendarService.createEvent(mentorId, {
+                    title: topic,
+                    description,
+                    start: start.toISOString(),
+                    end: end.toISOString(),
+                    extendedPrivateProps: ext,
+                }),
+                this.googleCalendarService.createEvent(userId, {
+                    title: topic,
+                    description,
+                    start: start.toISOString(),
+                    end: end.toISOString(),
+                    extendedPrivateProps: ext,
+                }),
+            ]);
+
+            await this.appointmentModel.updateOne(
+                { _id: appointmentId },
+                {
+                    $set: {
+                        mentorGoogleCalendarEventId: mentorEv?.id ?? null,
+                        userGoogleCalendarEventId: userEv?.id ?? null,
+                    },
+                },
+            );
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            this.logger.warn(`Google Calendar sync after booking failed: ${msg}`);
+        }
+    }
+
+    private async removeGoogleCalendarEventsForAppointment(appt: {
+        mentorId: Types.ObjectId;
+        userId: Types.ObjectId;
+        mentorGoogleCalendarEventId?: string | null;
+        userGoogleCalendarEventId?: string | null;
+    }): Promise<void> {
+        try {
+            if (appt.mentorGoogleCalendarEventId) {
+                await this.googleCalendarService.deleteEvent(
+                    appt.mentorId.toString(),
+                    appt.mentorGoogleCalendarEventId,
+                );
+            }
+            if (appt.userGoogleCalendarEventId) {
+                await this.googleCalendarService.deleteEvent(
+                    appt.userId.toString(),
+                    appt.userGoogleCalendarEventId,
+                );
+            }
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            this.logger.warn(`Google Calendar delete on cancel failed: ${msg}`);
+        }
+    }
+
+    private async patchGoogleCalendarAfterReschedule(appt: {
+        mentorId: Types.ObjectId;
+        userId: Types.ObjectId;
+        mentorGoogleCalendarEventId?: string | null;
+        userGoogleCalendarEventId?: string | null;
+        meetingDate: Date;
+        endTime: Date;
+    }): Promise<void> {
+        const startIso = appt.meetingDate.toISOString();
+        const endIso = appt.endTime.toISOString();
+
+        try {
+            if (appt.mentorGoogleCalendarEventId) {
+                await this.googleCalendarService.updateEvent(
+                    appt.mentorId.toString(),
+                    appt.mentorGoogleCalendarEventId,
+                    startIso,
+                    endIso,
+                );
+            }
+            if (appt.userGoogleCalendarEventId) {
+                await this.googleCalendarService.updateEvent(
+                    appt.userId.toString(),
+                    appt.userGoogleCalendarEventId,
+                    startIso,
+                    endIso,
+                );
+            }
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            this.logger.warn(`Google Calendar reschedule patch failed: ${msg}`);
         }
     }
 
@@ -471,6 +664,13 @@ export class AppointmentsService {
 
                 if (overlap) continue;
 
+                try {
+                    await this.assertParticipantsGoogleFree(dto.mentorId, dto.userId, newStart, newEnd);
+                } catch (err) {
+                    if (err instanceof BadRequestException) continue;
+                    throw err;
+                }
+
                 finalMeetingDate = newStart;
                 break;
             }
@@ -482,6 +682,13 @@ export class AppointmentsService {
             }
         }
         const finalStartDate = new Date(finalMeetingDate);
+
+        await this.assertParticipantsGoogleFree(
+            dto.mentorId,
+            dto.userId,
+            finalStartDate,
+            new Date(finalStartDate.getTime() + durationMinutes * 60000),
+        );
 
         // Get user and mentor details for Zoom meeting topic
         const userDoc = await this.appointmentModel.db.model('User').findById(dto.userId).lean() as any;
@@ -600,6 +807,18 @@ export class AppointmentsService {
                 }
             }
         );
+
+        await this.syncGoogleCalendarAfterBooking({
+            appointmentId: saved._id as Types.ObjectId,
+            mentorId: dto.mentorId,
+            userId: dto.userId,
+            start: finalStartDate,
+            end: new Date(finalStartDate.getTime() + durationMinutes * 60000),
+            topic: `CCC meeting: ${userName} × ${mentorName}`,
+            description: [normalizedNotes, meetingLink ? `Join: ${meetingLink}` : '']
+                .filter(Boolean)
+                .join('\n'),
+        });
 
         const result = toAppointmentResponseDto(populated as AppointmentDocument);
 
@@ -1300,7 +1519,12 @@ export class AppointmentsService {
         };
     }
 
-    async getMonthlyAvailability(mentorId: string, year: number, month: number) {
+    async getMonthlyAvailability(
+        mentorId: string,
+        year: number,
+        month: number,
+        participantUserId?: string,
+    ) {
         const objectId = new Types.ObjectId(mentorId);
         const data = await this.availabilityModel.findOne({ mentorId: objectId }).lean();
 
@@ -1343,7 +1567,18 @@ export class AppointmentsService {
                     return slotDate.getTime() >= now.getTime() + noticeMs;
                 });
 
-                return { ...day, slots: filteredSlots, unavailable: false };
+                let slotsOut = filteredSlots;
+                if (slotsOut.length > 0) {
+                    slotsOut = await this.filterSlotsAgainstGoogleCalendar(
+                        mentorId,
+                        participantUserId,
+                        day.date,
+                        slotsOut,
+                        data.meetingDuration ?? 60,
+                    );
+                }
+
+                return { ...day, slots: slotsOut, unavailable: false };
             })
         );
     }
@@ -1428,6 +1663,17 @@ export class AppointmentsService {
         if (overlap)
             throw new BadRequestException("This slot is already booked by another appointment.");
 
+        await this.assertParticipantsGoogleFree(
+            mentorId.toString(),
+            appointment.userId.toString(),
+            meetingDateUtc,
+            newEndUtc,
+            {
+                meetingDate: appointment.meetingDate,
+                endTime: appointment.endTime,
+            },
+        );
+
         // 🚨 enforce max bookings per day for new date
         const startOfDay = new Date(meetingDateUtc);
         startOfDay.setHours(0, 0, 0, 0);
@@ -1502,6 +1748,15 @@ export class AppointmentsService {
                 { new: true }
             )
         ).lean();
+
+        await this.patchGoogleCalendarAfterReschedule({
+            mentorId: appointment.mentorId,
+            userId: appointment.userId,
+            mentorGoogleCalendarEventId: appointment.mentorGoogleCalendarEventId,
+            userGoogleCalendarEventId: appointment.userGoogleCalendarEventId,
+            meetingDate: meetingDateUtc,
+            endTime: newEndUtc,
+        });
 
         return toAppointmentResponseDto(updated as AppointmentDocument);
     }
@@ -1578,6 +1833,13 @@ export class AppointmentsService {
             }
         }
 
+        await this.removeGoogleCalendarEventsForAppointment({
+            mentorId: appointment.mentorId,
+            userId: appointment.userId,
+            mentorGoogleCalendarEventId: appointment.mentorGoogleCalendarEventId,
+            userGoogleCalendarEventId: appointment.userGoogleCalendarEventId,
+        });
+
         const mentorId = appointment.mentorId;
 
         // load availability
@@ -1590,7 +1852,9 @@ export class AppointmentsService {
                     $set: {
                         status: APPOINTMENT_STATUSES.CANCELED ?? 'canceled',
                         canceledAt: new Date(),
-                        cancelReason: dto.reason ?? null
+                        cancelReason: dto.reason ?? null,
+                        mentorGoogleCalendarEventId: null,
+                        userGoogleCalendarEventId: null,
                     }
                 }
             );
@@ -1640,7 +1904,9 @@ export class AppointmentsService {
                     $set: {
                         status: cancelledStatus,
                         canceledAt: new Date(),
-                        cancelReason: dto.reason ?? null
+                        cancelReason: dto.reason ?? null,
+                        mentorGoogleCalendarEventId: null,
+                        userGoogleCalendarEventId: null,
                     }
                 },
                 { new: true }
@@ -1721,7 +1987,8 @@ export class AppointmentsService {
 
     async getWeeklyAvailabilityByDate(
         mentorId: string,
-        dateStr: string
+        dateStr: string,
+        participantUserId?: string,
     ) {
         const objectId = new Types.ObjectId(mentorId);
 
@@ -1768,6 +2035,15 @@ export class AppointmentsService {
                         const slotDate = buildSlotDate(currentDateStr, slot);
                         return slotDate.getTime() >= now.getTime() + noticeMs;
                     });
+                    if (slots.length > 0) {
+                        slots = await this.filterSlotsAgainstGoogleCalendar(
+                            mentorId,
+                            participantUserId,
+                            currentDateStr,
+                            slots,
+                            availability.meetingDuration ?? 60,
+                        );
+                    }
                 }
 
                 return {

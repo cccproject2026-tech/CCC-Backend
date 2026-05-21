@@ -134,6 +134,12 @@ export class Appointment {
 
     @Prop({ type: String, default: null })
     transcriptSummaryModel?: string;
+
+    @Prop({ type: String, default: null })
+    mentorGoogleCalendarEventId?: string;
+
+    @Prop({ type: String, default: null })
+    userGoogleCalendarEventId?: string;
 }
 
 export const AppointmentSchema = SchemaFactory.createForClass(Appointment);

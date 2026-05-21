@@ -7,7 +7,7 @@ import * as bcrypt from 'bcrypt';
 import { ConfigService } from '@nestjs/config';
 import { LoginResponseDto } from './dto/login.dto';
 import { toUserResponseDto } from '../users/utils/user.mapper';
-import { GoogleCalendarService } from './google.service';
+import { GoogleCalendarService } from '../google-calendar/google-calendar.service';
 
 @Injectable()
 export class AuthService {
