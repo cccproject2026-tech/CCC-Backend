@@ -137,6 +137,18 @@ export const VALID_USER_APPLICATION_STATUSES = [
   USER_APPLICATION_STATUSES.REJECTED,
 ] as const;
 
+/** Client onboarding resume steps (cross-platform). */
+export const ONBOARDING_NEXT_STEPS = {
+  PENDING: 'pending',
+  VERIFY_EMAIL: 'verify-email',
+  SET_PASSWORD: 'set-password',
+  LOGIN: 'login',
+  REJECTED: 'rejected',
+} as const;
+
+export type OnboardingNextStep =
+  (typeof ONBOARDING_NEXT_STEPS)[keyof typeof ONBOARDING_NEXT_STEPS];
+
 export const ASSESSMENT_ASSIGNMENT_STATUSES = {
   ASSIGNED: 'assigned',
   DUE: 'due',

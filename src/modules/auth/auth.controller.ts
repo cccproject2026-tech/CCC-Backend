@@ -8,12 +8,28 @@ import {
     ResetPasswordDto,
 } from './dto/password.dto';
 import { RefreshTokenDto } from './dto/token.dto';
+import {
+    CheckOnboardingStatusDto,
+    OnboardingStatusResponseDto,
+} from './dto/onboarding-status.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { BaseResponse } from 'src/shared/interfaces/base-response.interface';
 
 @Controller('auth')
 export class AuthController {
     constructor(private readonly authService: AuthService) { }
+
+    @Post('check-onboarding-status')
+    async checkOnboardingStatus(
+        @Body() dto: CheckOnboardingStatusDto,
+    ): Promise<BaseResponse<OnboardingStatusResponseDto>> {
+        const data = await this.authService.checkOnboardingStatus(dto.email);
+        return {
+            success: true,
+            message: 'Onboarding status retrieved successfully',
+            data,
+        };
+    }
 
     @Post('login')
     async login(@Body() dto: LoginDto): Promise<BaseResponse<LoginResponseDto>> {

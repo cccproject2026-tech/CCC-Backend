@@ -1,4 +1,5 @@
-import { IsEmail, IsNotEmpty, MinLength, IsOptional, IsEnum, IsMongoId, IsBoolean, IsString } from 'class-validator';
+import { IsEmail, IsNotEmpty, MinLength, IsOptional, IsEnum, IsMongoId, IsBoolean, IsString, IsDate } from 'class-validator';
+import { Type } from 'class-transformer';
 import { Types } from 'mongoose';
 import { ROLES } from '../../../common/constants/roles.constants';
 import { USER_STATUSES } from '../../../common/constants/status.constants';
@@ -41,6 +42,20 @@ export class CreateUserDto {
     @IsOptional()
     @IsBoolean()
     isEmailVerified?: boolean;
+
+    @IsOptional()
+    @Type(() => Date)
+    @IsDate()
+    emailVerifiedAt?: Date;
+
+    @IsOptional()
+    @IsBoolean()
+    isPasswordSet?: boolean;
+
+    @IsOptional()
+    @Type(() => Date)
+    @IsDate()
+    passwordCreatedAt?: Date;
 
     @IsOptional()
     @IsString()

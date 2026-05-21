@@ -70,6 +70,15 @@ export class User {
   isEmailVerified: boolean;
 
   @Prop()
+  emailVerifiedAt?: Date;
+
+  @Prop({ default: false })
+  isPasswordSet: boolean;
+
+  @Prop()
+  passwordCreatedAt?: Date;
+
+  @Prop()
   refreshToken?: string;
 
   @Prop()

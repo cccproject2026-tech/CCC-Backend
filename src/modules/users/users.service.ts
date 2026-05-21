@@ -192,6 +192,10 @@ export class UsersService {
         return user;
     }
 
+    async findByEmailOptional(email: string | RegExp): Promise<UserDocument | null> {
+        return this.userModel.findOne({ email }).exec();
+    }
+
     async findByRole(role: string): Promise<UserResponseDto[]> {
         const users = await this.userModel.find({ role }).select('-password -refreshToken -uploadedDocuments -notes').lean().exec();
         if (!users || users.length === 0)

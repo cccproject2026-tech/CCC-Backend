@@ -11,6 +11,7 @@ import { JwtStrategy } from './utils/jwt.strategy';
 import { UsersModule } from '../../modules/users/users.module';
 import { MailerService } from '../../common/utils/mail.util';
 import { GoogleCalendarModule } from '../google-calendar/google-calendar.module';
+import { Interest, InterestSchema } from '../interests/schemas/interest.schema';
 
 @Module({
     imports: [
@@ -24,7 +25,10 @@ import { GoogleCalendarModule } from '../google-calendar/google-calendar.module'
             }),
             inject: [ConfigService],
         }),
-        MongooseModule.forFeature([{ name: OtpToken.name, schema: OtpTokenSchema }]),
+        MongooseModule.forFeature([
+            { name: OtpToken.name, schema: OtpTokenSchema },
+            { name: Interest.name, schema: InterestSchema },
+        ]),
         UsersModule,
         GoogleCalendarModule,
     ],

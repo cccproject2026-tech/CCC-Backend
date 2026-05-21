@@ -1,4 +1,6 @@
-import { Injectable, UnauthorizedException, BadRequestException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, BadRequestException, NotFoundException } from '@nestjs/common';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
 import { UsersService } from '../../modules/users/users.service';
 import { JwtService } from '@nestjs/jwt';
 import { comparePassword } from '../../common/utils/bcrypt.util';
@@ -6,8 +8,11 @@ import { OtpService } from './otp.service';
 import * as bcrypt from 'bcrypt';
 import { ConfigService } from '@nestjs/config';
 import { LoginResponseDto } from './dto/login.dto';
+import { OnboardingStatusResponseDto } from './dto/onboarding-status.dto';
 import { toUserResponseDto } from '../users/utils/user.mapper';
 import { GoogleCalendarService } from '../google-calendar/google-calendar.service';
+import { Interest, InterestDocument } from '../interests/schemas/interest.schema';
+import { buildOnboardingStatusResponse } from './utils/onboarding-status.util';
 
 @Injectable()
 export class AuthService {
@@ -17,7 +22,34 @@ export class AuthService {
         private readonly otpService: OtpService,
         private readonly configService: ConfigService,
         private readonly googleService: GoogleCalendarService,
+        @InjectModel(Interest.name) private readonly interestModel: Model<InterestDocument>,
     ) { }
+
+    private emailFilter(email: string): { email: RegExp } {
+        const trimmed = email.trim();
+        const escaped = trimmed.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        return { email: new RegExp(`^${escaped}$`, 'i') };
+    }
+
+    async checkOnboardingStatus(email: string): Promise<OnboardingStatusResponseDto> {
+        const filter = this.emailFilter(email);
+        const [user, interest] = await Promise.all([
+            this.usersService.findByEmailOptional(filter.email),
+            this.interestModel.findOne(filter).select('email status').lean().exec(),
+        ]);
+
+        if (!user && !interest) {
+            throw new NotFoundException('No application found for this email');
+        }
+
+        return buildOnboardingStatusResponse({
+            email: (interest?.email || user?.email || email).trim(),
+            interestStatus: interest?.status ?? user?.status,
+            isEmailVerified: user?.isEmailVerified,
+            isPasswordSet: user?.isPasswordSet,
+            hasPassword: Boolean(user?.password),
+        });
+    }
 
     async login(email: string, password: string): Promise<LoginResponseDto> {
         const user = await this.usersService.findByEmail(email);
@@ -80,7 +112,11 @@ export class AuthService {
         if (!user) throw new BadRequestException('User not found');
         if (!user.isEmailVerified) throw new BadRequestException('Email not verified');
 
-        await this.usersService.update(user._id!.toString(), { password });
+        await this.usersService.update(user._id!.toString(), {
+            password,
+            isPasswordSet: true,
+            passwordCreatedAt: new Date(),
+        });
         return { success: true };
     }
 
