@@ -21,6 +21,8 @@ import { Availability, AvailabilityDocument } from '../appointments/schemas/avai
 import { buildMeetingDate, normalizeRoadmapName, SESSION_FLOW, SESSION_NOTES } from './utils/helper';
 import { AppointmentsService } from '../appointments/appointments.service';
 import { S3Service } from '../s3/s3.service';
+import { MailerService } from '../../common/utils/mail.util';
+import { ROLES } from '../../common/constants/roles.constants';
 
 function resolveDefaultSteps(totalSteps?: number, extras?: any[]): number {
     if (typeof totalSteps === 'number' && totalSteps > 0) {
@@ -42,8 +44,26 @@ export class RoadMapsService {
         @InjectModel(User.name) private userModel: Model<UserDocument>,
         @InjectModel(Availability.name) private availabilityModel: Model<AvailabilityDocument>,
         private readonly s3Service: S3Service,
-        private readonly appointmentService: AppointmentsService
+        private readonly appointmentService: AppointmentsService,
+        private readonly mailer: MailerService,
     ) { }
+
+    private excerpt(raw: string, max = 500): string {
+        const text = (raw ?? '').trim();
+        if (!text.length) return '';
+        if (text.length <= max) return text;
+        return `${text.slice(0, max).trimEnd()}…`;
+    }
+
+    private isPastoralLearnerRole(role?: string): boolean {
+        const r = (role ?? '').trim().toLowerCase();
+        return r === ROLES.PASTOR || r === ROLES.LAY_LEADER || r === ROLES.SEMINARIAN;
+    }
+
+    private isMentorTrackRole(role?: string): boolean {
+        const r = (role ?? '').trim().toLowerCase();
+        return r === ROLES.MENTOR || r === ROLES.FIELD_MENTOR;
+    }
 
     async create(dto: CreateRoadMapDto, image?: Express.Multer.File): Promise<RoadMapResponseDto> {
         const existing = await this.roadMapModel.findOne({ name: dto.name }).lean().exec();
@@ -236,6 +256,31 @@ export class RoadMapsService {
             .lean()
             .exec();
 
+        try {
+            const [roadmap, pastor, mentor] = await Promise.all([
+                this.roadMapModel.findById(roadMapId).select('name').lean().exec(),
+                this.userModel.findById(userObjectId).select('email firstName').lean().exec(),
+                this.userModel.findById(dto.mentorId).select('firstName lastName').lean().exec(),
+            ]);
+            const roadMapName =
+                roadmap && 'name' in roadmap ? `${(roadmap as { name: string }).name}` : 'Roadmap';
+            const mentorName = mentor ? `${mentor.firstName} ${mentor.lastName}` : 'Your mentor';
+
+            const commentExcerpt = this.excerpt(dto.text);
+
+            if (pastor?.email) {
+                void this.mailer.sendPastorRoadmapComment({
+                    to: pastor.email,
+                    pastorFirstName: pastor.firstName,
+                    mentorName,
+                    roadMapName,
+                    commentExcerpt: commentExcerpt || '(New comment — see CCC app)',
+                });
+            }
+        } catch {
+            /* non-blocking */
+        }
+
         return toCommentsThreadResponseDto(updatedThread as any);
     }
 
@@ -349,7 +394,52 @@ export class RoadMapsService {
             .lean()
             .exec();
 
+        void this.notifyMentorsOfPastorRoadmapQuestion(roadMapId, dto.userId, dto.actualQueryText);
+
         return toQueriesThreadResponseDto(updatedThread as any);
+    }
+
+    private async notifyMentorsOfPastorRoadmapQuestion(
+        roadMapId: string,
+        pastorMongoUserId: string,
+        actualQueryText: string,
+    ) {
+        try {
+            const [roadmap, pastor] = await Promise.all([
+                this.roadMapModel.findById(roadMapId).select('name').lean().exec(),
+                this.userModel
+                    .findById(new Types.ObjectId(pastorMongoUserId))
+                    .select('assignedId email firstName lastName role')
+                    .lean()
+                    .exec(),
+            ]);
+            const roadMapName = roadmap && 'name' in roadmap ? `${(roadmap as { name: string }).name}` : 'Roadmap';
+            if (!pastor?.assignedId?.length) return;
+
+            const pastorName = `${pastor.firstName} ${pastor.lastName}`;
+            const excerptText = this.excerpt(actualQueryText);
+            const seen = new Set<string>();
+
+            if (!this.isPastoralLearnerRole((pastor as { role?: string }).role)) return;
+
+            for (const mentorRef of pastor.assignedId) {
+                const mid = mentorRef.toString();
+                if (seen.has(mid)) continue;
+                seen.add(mid);
+                const mentor = await this.userModel.findById(mentorRef).select('email firstName role').lean().exec();
+                const roleStr = mentor && 'role' in mentor ? `${(mentor as { role: string }).role}` : '';
+                if (!mentor?.email || !this.isMentorTrackRole(roleStr)) continue;
+                void this.mailer.sendMentorNewPastorQuery({
+                    to: mentor.email,
+                    mentorFirstName: mentor.firstName,
+                    pastorName,
+                    roadMapName,
+                    excerpt: excerptText || '(Question posted — see CCC app)',
+                });
+            }
+        } catch {
+            /* non-blocking */
+        }
     }
 
     async replyQuery(roadMapId: string, queryItemId: string, dto: ReplyQueryDto): Promise<QueriesThreadResponseDto> {
@@ -377,6 +467,30 @@ export class RoadMapsService {
 
         if (!updatedThread) {
             throw new NotFoundException(`Query thread or item ID ${queryItemId} not found.`);
+        }
+
+        try {
+            const [roadmap, pastor, mentor] = await Promise.all([
+                this.roadMapModel.findById(roadMapId).select('name').lean().exec(),
+                this.userModel.findById(updatedThread.userId).select('email firstName').lean().exec(),
+                this.userModel.findById(mentorObjectId).select('firstName lastName').lean().exec(),
+            ]);
+            const roadMapName =
+                roadmap && 'name' in roadmap ? `${(roadmap as { name: string }).name}` : 'Roadmap';
+            const mentorName = mentor ? `${mentor.firstName} ${mentor.lastName}` : 'Your mentor';
+
+            const excerptAnswer = this.excerpt(dto.repliedAnswer);
+            if (pastor?.email) {
+                void this.mailer.sendPastorQueryAnswered({
+                    to: pastor.email,
+                    pastorFirstName: pastor.firstName,
+                    mentorName,
+                    roadMapName,
+                    answerExcerpt: excerptAnswer || '(Reply posted — see CCC app)',
+                });
+            }
+        } catch {
+            /* non-blocking */
         }
 
         return toQueriesThreadResponseDto(updatedThread as any);

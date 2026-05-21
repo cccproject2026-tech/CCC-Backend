@@ -17,6 +17,8 @@ import { S3Service } from '../s3/s3.service';
 import { calculateSectionScore } from './utils/assessment.utils';
 import { AssessmentAssigned, AssessmentAssignedDocument } from './schemas/assessment_assigned';
 import { HomeService } from '../home/home.service';
+import { MailerService } from '../../common/utils/mail.util';
+import { ROLES } from '../../common/constants/roles.constants';
 
 @Injectable()
 export class AssessmentService {
@@ -33,8 +35,18 @@ export class AssessmentService {
     @InjectModel(AssessmentAssigned.name)
     private assessmentAssignedModel: Model<AssessmentAssignedDocument>,
     private readonly notificationService: HomeService,
+    private readonly mailer: MailerService,
   ) { }
 
+  private isPastoralLearnerRole(role?: string): boolean {
+    const r = (role ?? '').trim().toLowerCase();
+    return r === ROLES.PASTOR || r === ROLES.LAY_LEADER || r === ROLES.SEMINARIAN;
+  }
+
+  private isMentorTrackRole(role?: string): boolean {
+    const r = (role ?? '').trim().toLowerCase();
+    return r === ROLES.MENTOR || r === ROLES.FIELD_MENTOR;
+  }
   async create(dto: CreateAssessmentDto): Promise<Assessment> {
     const newAssessment = await this.assessmentModel.create({
       ...dto,
@@ -132,13 +144,18 @@ export class AssessmentService {
     const assessment = await this.assessmentModel.findById(assessmentId).exec();
     if (!assessment) throw new NotFoundException('Assessment not found');
 
-    const validUsers = await this.userModel
+    type AssignUserLean = Pick<UserDocument, 'email' | 'firstName' | 'lastName' | 'role'> & {
+      _id: Types.ObjectId;
+      assignedId?: Types.ObjectId[];
+    };
+
+    const validUsers = (await this.userModel
       .find({
         _id: { $in: userIds.map((id) => new Types.ObjectId(id)) },
       })
-      .select('_id')
+      .select('_id email firstName lastName role assignedId')
       .lean()
-      .exec();
+      .exec()) as AssignUserLean[];
 
     if (validUsers.length === 0) {
       throw new BadRequestException('No valid users found');
@@ -169,6 +186,37 @@ export class AssessmentService {
       )
       .lean()
       .exec();
+
+    const assessmentTitle = assessment.name;
+
+    for (const u of newUsers) {
+      if (u.email) {
+        void this.mailer.sendAssessmentAssigned({
+          to: u.email,
+          firstName: u.firstName,
+          assessmentTitle,
+          assessmentId: assessmentId.toString(),
+        });
+      }
+
+      const pastorName = `${u.firstName} ${u.lastName}`;
+      if (this.isPastoralLearnerRole(u.role as string | undefined) && u.assignedId?.length) {
+        const seen = new Set<string>();
+        for (const mentorRef of u.assignedId) {
+          const mid = mentorRef.toString();
+          if (seen.has(mid)) continue;
+          seen.add(mid);
+          const mentor = await this.userModel.findById(mentorRef).select('email firstName role').lean().exec();
+          if (!mentor?.email || !this.isMentorTrackRole((mentor as { role?: string }).role)) continue;
+          void this.mailer.sendAssessmentAssigned({
+            to: mentor.email,
+            firstName: mentor.firstName,
+            assessmentTitle: `[Assigned to ${pastorName}] ${assessmentTitle}`,
+            assessmentId: assessmentId.toString(),
+          });
+        }
+      }
+    }
 
     return updated;
   }

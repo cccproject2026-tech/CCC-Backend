@@ -23,6 +23,7 @@ import { VALID_USER_APPLICATION_STATUSES, USER_APPLICATION_STATUSES, VALID_USER_
 import { UsersService } from '../users/users.service';
 import { ROLES } from '../../common/constants/roles.constants';
 import { HomeService } from '../home/home.service';
+import { MailerService } from 'src/common/utils/mail.util';
 
 @Injectable()
 export class InterestService {
@@ -31,6 +32,7 @@ export class InterestService {
     private readonly interestModel: Model<InterestDocument>,
     private readonly usersService: UsersService,
     private readonly notificationService: HomeService,
+    private readonly mailer: MailerService,
   ) { }
 
   private mapTitleToRole(title?: string): string {
@@ -118,6 +120,12 @@ export class InterestService {
     } catch (notificationError: any) {
       console.warn(`Failed to send notification for interest ${interest._id}:`, notificationError.message);
     }
+
+    void this.mailer.sendInterestSubmissionConfirmation({
+      to: dto.email,
+      firstName: dto.firstName,
+      applicantRoleHint: dto.title,
+    });
 
     return toInterestResponseDto(interest);
   }
@@ -283,6 +291,22 @@ export class InterestService {
 
     const updatedUser = await this.usersService.update(userId, { status });
     console.log(`Updated user ${userId} with status: ${status}`);
+
+    if (status === USER_STATUSES.ACCEPTED) {
+      void this.mailer.sendInterestApprovedNextSteps({
+        to: updatedUser.email,
+        firstName: updatedUser.firstName,
+      });
+      void this.mailer.sendCourseOverview({
+        to: updatedUser.email,
+        firstName: updatedUser.firstName,
+      });
+    } else if (status === USER_STATUSES.REJECTED) {
+      void this.mailer.sendInterestRejected({
+        to: updatedUser.email,
+        firstName: updatedUser.firstName,
+      });
+    }
 
     this.interestModel.updateOne(
       { userId: userId },

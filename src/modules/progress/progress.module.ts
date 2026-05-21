@@ -7,9 +7,12 @@ import { RoadMap, RoadMapSchema } from '../roadmaps/schemas/roadmap.schema';
 import { Assessment, AssessmentSchema } from '../assessment/schemas/assessment.schema';
 import { User, UserSchema } from '../users/schemas/user.schema';
 import { AssessmentAssigned, AssessmentAssignedSchema } from '../assessment/schemas/assessment_assigned';
+import { MailerService } from 'src/common/utils/mail.util';
+import { ConfigModule } from '@nestjs/config';
 
 @Module({
     imports: [
+        ConfigModule,
         MongooseModule.forFeature([
             { name: Progress.name, schema: ProgressSchema },
             { name: RoadMap.name, schema: RoadMapSchema },
@@ -19,7 +22,7 @@ import { AssessmentAssigned, AssessmentAssignedSchema } from '../assessment/sche
         ]),
     ],
     controllers: [ProgressController],
-    providers: [ProgressService],
+    providers: [ProgressService, MailerService],
     exports: [ProgressService],
 })
 export class ProgressModule { }

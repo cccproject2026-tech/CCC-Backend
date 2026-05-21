@@ -17,6 +17,8 @@ import {
 } from './dto/progress.dto';
 import { ASSESSMENT_ASSIGNMENT_STATUSES, PROGRESS_STATUSES } from '../../common/constants/status.constants';
 import { AssessmentAssigned, AssessmentAssignedDocument } from '../assessment/schemas/assessment_assigned';
+import { MailerService } from '../../common/utils/mail.util';
+import { ROLES } from '../../common/constants/roles.constants';
 
 function resolveAssignedRoadmapSteps(totalSteps?: number, extras?: any[], nestedRoadmaps?: any[]): number {
     if (typeof totalSteps === 'number' && totalSteps > 0) {
@@ -40,7 +42,22 @@ export class ProgressService {
         @InjectModel(Assessment.name) private assessmentModel: Model<AssessmentDocument>,
         @InjectModel(User.name) private userModel: Model<UserDocument>,
         @InjectModel(AssessmentAssigned.name) private assessmentAssignedModel: Model<AssessmentAssignedDocument>,
+        private readonly mailer: MailerService,
     ) { }
+
+    private isPastoralLearnerRole(role?: string): boolean {
+        const r = (role ?? '').trim().toLowerCase();
+        return (
+            r === ROLES.PASTOR ||
+            r === ROLES.LAY_LEADER ||
+            r === ROLES.SEMINARIAN
+        );
+    }
+
+    private isMentorTrackRole(role?: string): boolean {
+        const r = (role ?? '').trim().toLowerCase();
+        return r === ROLES.MENTOR || r === ROLES.FIELD_MENTOR;
+    }
 
     async findByUserId(userId: Types.ObjectId): Promise<ProgressResponseDto | null> {
         const userObjectId: Types.ObjectId = userId;
@@ -63,7 +80,7 @@ export class ProgressService {
         // Step 1: Validate all roadmaps exist and fetch their data including nested roadmaps
         const roadMaps = await this.roadMapModel.find(
             { _id: { $in: dto.roadMapIds } },
-            { _id: 1, totalSteps: 1, extras: 1, roadmaps: 1 }
+            { _id: 1, name: 1, totalSteps: 1, extras: 1, roadmaps: 1 },
         ).lean().exec();
 
         if (roadMaps.length !== dto.roadMapIds.length) {
@@ -73,13 +90,16 @@ export class ProgressService {
         }
 
         // Create a map for O(1) lookup of roadmap data by roadMapId
-        const roadMapDataMap = new Map(roadMaps.map(r => [
-            r._id.toString(),
-            {
-                totalSteps: resolveAssignedRoadmapSteps(r.totalSteps, r.extras, r.roadmaps),
-                nestedRoadmaps: r.roadmaps || []
-            }
-        ]));
+        const roadMapDataMap = new Map(
+            roadMaps.map((r) => [
+                r._id.toString(),
+                {
+                    name: (r as { name?: string }).name ?? 'Roadmap',
+                    totalSteps: resolveAssignedRoadmapSteps(r.totalSteps, r.extras, r.roadmaps),
+                    nestedRoadmaps: r.roadmaps || [],
+                },
+            ]),
+        );
 
         // Step 2: Fetch all existing progress records for all users in a single query (prevents N+1 problem)
         const existingProgressRecords = await this.progressModel.find(
@@ -154,6 +174,53 @@ export class ProgressService {
                 ).exec();
 
                 results.push(toProgressResponseDto(updatedProgress));
+
+                const learner = await this.userModel
+                    .findById(userId)
+                    .select('email firstName lastName role assignedId')
+                    .lean()
+                    .exec();
+                const roadmapPayload = newRoadMapIds.map((id) => {
+                    const meta = roadMapDataMap.get(id.toString());
+                    return {
+                        id: id.toString(),
+                        name: meta?.name ?? 'Roadmap',
+                        totalSteps: meta?.totalSteps,
+                    };
+                });
+                if (learner?.email) {
+                    void this.mailer.sendRoadmapsAssigned({
+                        to: learner.email,
+                        recipientFirstName: learner.firstName,
+                        roadmaps: roadmapPayload,
+                        introLine:
+                            roadmapPayload.length > 1
+                                ? `${roadmapPayload.length} new roadmap(s) are now on your CCC dashboard — open each below for steps and milestones.`
+                                : 'A new roadmap is now on your CCC dashboard — open it below for steps and milestones.',
+                    });
+                    if (
+                        this.isPastoralLearnerRole((learner as { role?: string }).role) &&
+                        (learner as { assignedId?: Types.ObjectId[] }).assignedId?.length
+                    ) {
+                        const pastorName = `${learner.firstName} ${learner.lastName}`;
+                        const seen = new Set<string>();
+                        for (const mentorRef of (learner as { assignedId: Types.ObjectId[] }).assignedId) {
+                            const mid = mentorRef.toString();
+                            if (seen.has(mid)) continue;
+                            seen.add(mid);
+                            const mentor = await this.userModel.findById(mentorRef).select('email firstName').lean().exec();
+                            if (!mentor?.email || !this.isMentorTrackRole((mentor as { role?: string }).role)) {
+                                continue;
+                            }
+                            void this.mailer.sendRoadmapsAssigned({
+                                to: mentor.email,
+                                recipientFirstName: mentor.firstName,
+                                roadmaps: roadmapPayload,
+                                introLine: `Roadmap(s) were assigned to ${pastorName} (connected to your mentee list). Steps and links appear below.`,
+                            });
+                        }
+                    }
+                }
             } catch (error) {
                 errors.push(`Failed to assign roadmaps to user ${userId}: ${error.message}`);
             }
@@ -171,7 +238,7 @@ export class ProgressService {
         // Step 1: Validate all assessments exist and fetch their data
         const assessments = await this.assessmentModel.find(
             { _id: { $in: dto.assessmentIds } },
-            { _id: 1, sections: 1 }
+            { _id: 1, sections: 1, name: 1 },
         ).lean().exec();
 
         if (assessments.length !== dto.assessmentIds.length) {
@@ -181,12 +248,15 @@ export class ProgressService {
         }
 
         // Create a map for O(1) lookup of assessment data by assessmentId
-        const assessmentDataMap = new Map(assessments.map(a => [
-            a._id.toString(),
-            {
-                totalSections: a.sections?.length || 0
-            }
-        ]));
+        const assessmentDataMap = new Map(
+            assessments.map((a) => [
+                a._id.toString(),
+                {
+                    name: (a as { name?: string }).name ?? 'Assessment',
+                    totalSections: a.sections?.length || 0,
+                },
+            ]),
+        );
 
         // Step 2: Fetch all existing progress records for all users in a single query (prevents N+1 problem)
         const existingProgressRecords = await this.progressModel.find(
@@ -226,7 +296,7 @@ export class ProgressService {
                     const assessmentData = assessmentDataMap.get(assessmentId.toString());
 
                     return {
-                        assessmentId: assessmentId,
+                        assessmentId,
                         completedSections: 0,
                         totalSections: assessmentData?.totalSections || 0,
                         progressPercentage: 0,
@@ -275,21 +345,71 @@ export class ProgressService {
                     await this.assessmentModel.updateOne(
                         {
                             _id: assessmentId,
-                            'assignments.userId': { $ne: userId }
+                            'assignments.userId': { $ne: userId },
                         },
                         {
                             $push: {
                                 assignments: {
                                     userId: userId,
                                     assignedAt: new Date(),
-                                    status: ASSESSMENT_ASSIGNMENT_STATUSES.ASSIGNED
-                                }
-                            }
-                        }
+                                    status: ASSESSMENT_ASSIGNMENT_STATUSES.ASSIGNED,
+                                },
+                            },
+                        },
                     );
                 }
 
                 results.push(toProgressResponseDto(updatedProgress));
+
+                const learner = await this.userModel
+                    .findById(userId)
+                    .select('email firstName lastName role assignedId')
+                    .lean()
+                    .exec();
+
+                if (learner?.email) {
+                    for (const assessmentId of newAssessmentIds) {
+                        const meta = assessmentDataMap.get(assessmentId.toString());
+                        void this.mailer.sendAssessmentAssigned({
+                            to: learner.email,
+                            firstName: learner.firstName,
+                            assessmentTitle: meta?.name ?? 'Assessment',
+                            assessmentId: assessmentId.toString(),
+                        });
+                    }
+                    if (
+                        this.isPastoralLearnerRole((learner as { role?: string }).role) &&
+                        (learner as { assignedId?: Types.ObjectId[] }).assignedId?.length
+                    ) {
+                        const pastorName = `${learner.firstName} ${learner.lastName}`;
+                        const seen = new Set<string>();
+                        for (const mentorRef of (learner as { assignedId: Types.ObjectId[] }).assignedId) {
+                            const mid = mentorRef.toString();
+                            if (seen.has(mid)) continue;
+                            seen.add(mid);
+                            const mentor = await this.userModel
+                                .findById(mentorRef)
+                                .select('email firstName role')
+                                .lean()
+                                .exec();
+                            if (
+                                !mentor?.email ||
+                                !this.isMentorTrackRole((mentor as { role?: string }).role)
+                            ) {
+                                continue;
+                            }
+                            for (const assessmentId of newAssessmentIds) {
+                                const meta = assessmentDataMap.get(assessmentId.toString());
+                                void this.mailer.sendAssessmentAssigned({
+                                    to: mentor.email,
+                                    firstName: mentor.firstName,
+                                    assessmentTitle: `[Assigned to ${pastorName}] ${meta?.name ?? 'Assessment'}`,
+                                    assessmentId: assessmentId.toString(),
+                                });
+                            }
+                        }
+                    }
+                }
             } catch (error) {
                 errors.push(`Failed to assign assessments to user ${userId}: ${error.message}`);
             }

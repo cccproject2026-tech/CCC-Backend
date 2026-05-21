@@ -25,6 +25,8 @@ import {
 import { ROLES } from '../../common/constants/roles.constants';
 import { nanoid } from 'nanoid';
 import { HomeService } from '../home/home.service';
+import { MailerService } from '../../common/utils/mail.util';
+import { ConfigService } from '@nestjs/config';
 
 /** Mongoose assigns `_id` on each `uploadedDocuments` subdocument; it is not on the User class fields type. */
 type UploadedDocumentSubdoc = User['uploadedDocuments'][number] & {
@@ -38,7 +40,31 @@ export class UsersService {
         @InjectModel(Interest.name) private interestModel: Model<InterestDocument>,
         private readonly s3Service: S3Service,
         private readonly notificationService: HomeService,
+        private readonly mailer: MailerService,
+        private readonly config: ConfigService,
     ) { }
+
+    /** Human-readable label for assignment emails ("mentor", "pastor", or generic). */
+    private connectionRoleLabel(counterpartRole: string): string {
+        const r = (counterpartRole || '').trim().toLowerCase();
+        if (r === ROLES.MENTOR || r === ROLES.FIELD_MENTOR) return 'mentor';
+        if (r === ROLES.PASTOR || r === ROLES.LAY_LEADER || r === ROLES.SEMINARIAN) return 'pastor';
+        return 'CCC partner';
+    }
+
+    private fieldMentorInviteLink(token: string): string {
+        const tpl = this.config.get<string>('CCC_FIELD_MENTOR_INVITE_URL_TEMPLATE')?.trim();
+        const encToken = encodeURIComponent(token);
+        if (tpl?.includes('{token}')) {
+            return tpl.replace(/{token}/g, encToken);
+        }
+        const web = (this.config.get<string>('CCC_PUBLIC_WEB_URL') || '').trim().replace(/\/$/, '');
+        if (!web) return '';
+        const pathSeg =
+            this.config.get<string>('CCC_FIELD_MENTOR_INVITE_PATH')?.trim()?.replace(/^\/+/, '').replace(/\/$/, '') ||
+            'accept-field-mentor';
+        return `${web}/${pathSeg}?token=${encodeURIComponent(token)}`;
+    }
 
     async create(dto: CreateUserDto): Promise<UserResponseDto> {
         const existing = await this.userModel.findOne({ email: dto.email });
@@ -214,13 +240,14 @@ export class UsersService {
 
     async assignUsers(userId: string, dto: AssignMentorMenteeDto) {
         const assigningUser = await this.userModel.findById(userId)
-            .select('_id firstName lastName');
+            .select('_id firstName lastName email role')
+            .lean();
 
         if (!assigningUser) throw new NotFoundException('User not found');
 
         const targetUsers = await this.userModel.find({
             _id: { $in: dto.assignedId }
-        }).select('_id firstName lastName').lean();
+        }).select('_id firstName lastName email role').lean();
 
         if (targetUsers.length !== dto.assignedId.length) {
             throw new NotFoundException('One or more users not found');
@@ -239,6 +266,10 @@ export class UsersService {
             { $addToSet: { assignedId: assigningUser._id } }
         );
 
+        const assignerName = `${assigningUser.firstName} ${assigningUser.lastName}`;
+        const assignerLabel = assigningUser.role ?? '';
+        const assignerIdStr = assigningUser._id.toString();
+
         for (const target of targetUsers) {
             await this.notificationService.addNotification({
                 userId: target._id.toString(),
@@ -246,11 +277,28 @@ export class UsersService {
                 details: `You have been assigned to ${assigningUser.firstName} ${assigningUser.lastName}.`,
                 module: "assignment",
             });
-        }
 
-        const assignedNames = targetUsers
-            .map(u => `${u.firstName} ${u.lastName}`)
-            .join(', ');
+            const targetEmail = (target as { email?: string }).email;
+            if (targetEmail) {
+                void this.mailer.sendPartnerAssignedWithProfile({
+                    to: targetEmail,
+                    recipientFirstName: target.firstName,
+                    counterpartName: assignerName,
+                    counterpartUserId: assignerIdStr,
+                    counterpartRoleLabel: this.connectionRoleLabel(assignerLabel),
+                });
+            }
+            const assignerEmail = (assigningUser as { email?: string }).email;
+            if (assignerEmail) {
+                void this.mailer.sendPartnerAssignedWithProfile({
+                    to: assignerEmail,
+                    recipientFirstName: assigningUser.firstName,
+                    counterpartName: `${target.firstName} ${target.lastName}`,
+                    counterpartUserId: target._id.toString(),
+                    counterpartRoleLabel: this.connectionRoleLabel((target as { role?: string }).role ?? ''),
+                });
+            }
+        }
 
         await this.notificationService.addNotification({
             userId,
@@ -530,7 +578,7 @@ export class UsersService {
                 { fieldMentorInvitation: { $exists: false } },
                 { 'fieldMentorInvitation.expiresAt': { $lte: new Date() } }
             ]
-        }).select('_id').lean();
+        }).select('_id email firstName lastName').lean();
 
         if (!user) {
             const existingUser = await this.userModel.findOne({ email: dto.email }).select('fieldMentorInvitation').lean();
@@ -551,6 +599,16 @@ export class UsersService {
                 token,
                 expiresAt,
             },
+        });
+
+        const inviter = await this.userModel.findById(dto.invitedBy).select('firstName lastName').lean();
+        const inviterName = inviter ? `${inviter.firstName} ${inviter.lastName}` : 'CCC program staff';
+
+        void this.mailer.sendFieldMentorInvitation({
+            to: dto.email,
+            invitedFirstName: user.firstName || 'there',
+            inviterName,
+            invitationLink: this.fieldMentorInviteLink(token),
         });
 
         return { token, expiresAt };
@@ -631,11 +689,16 @@ export class UsersService {
             dto.userId,
             { hasCompleted: true },
             { new: true }
-        );
+        ).exec();
 
         if (!user) {
             throw new NotFoundException('User not found');
         }
+
+        void this.mailer.sendCourseCompleted({
+            to: user.email,
+            firstName: user.firstName,
+        });
 
         return toUserResponseDto(user);
     }
@@ -649,23 +712,29 @@ export class UsersService {
             },
             { hasIssuedCertificate: true },
             { new: true }
-        );
+        ).exec();
 
-        if (!updatedUser) {
-            const user = await this.userModel.findById(dto.userId).select('hasCompleted hasIssuedCertificate').lean();
-
-            if (!user) {
-                throw new NotFoundException('User not found');
-            }
-            if (!user.hasCompleted) {
-                throw new BadRequestException('User has not completed their progress');
-            }
-            if (user.hasIssuedCertificate) {
-                throw new ConflictException('Certificate already issued to this user');
-            }
+        if (updatedUser) {
+            void this.mailer.sendCertificateIssued({
+                to: updatedUser.email,
+                firstName: updatedUser.firstName,
+            });
+            return toUserResponseDto(updatedUser);
         }
 
-        return toUserResponseDto(updatedUser);
+        const user = await this.userModel.findById(dto.userId).select('hasCompleted hasIssuedCertificate').lean();
+
+        if (!user) {
+            throw new NotFoundException('User not found');
+        }
+        if (!user.hasCompleted) {
+            throw new BadRequestException('User has not completed their progress');
+        }
+        if (user.hasIssuedCertificate) {
+            throw new ConflictException('Certificate already issued to this user');
+        }
+
+        throw new BadRequestException('Certificate could not be issued at this time');
     }
 
     async getNotes(userId: string): Promise<NoteResponseDto[]> {

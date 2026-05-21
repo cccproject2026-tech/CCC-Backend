@@ -9,12 +9,15 @@ import { S3Module } from '../s3/s3.module';
 import { MulterModule } from '@nestjs/platform-express';
 import { Interest, InterestSchema } from '../interests/schemas/interest.schema';
 import { HomeModule } from '../home/home.module';
+import { MailerService } from 'src/common/utils/mail.util';
+import { ConfigModule } from '@nestjs/config';
 
 @Module({
     imports: [
         MongooseModule.forFeature([{ name: User.name, schema: UserSchema },
         { name: Interest.name, schema: InterestSchema }
         ]),
+        ConfigModule,
         S3Module,
         MulterModule.register({
             storage: require('multer').memoryStorage(),
@@ -23,7 +26,7 @@ import { HomeModule } from '../home/home.module';
         forwardRef(() => require('../interests/interests.module').InterestModule),
     ],
     controllers: [UsersController, SuperAdminController],
-    providers: [UsersService, SuperAdminInitService],
+    providers: [UsersService, SuperAdminInitService, MailerService],
     exports: [UsersService],
 })
 export class UsersModule { }

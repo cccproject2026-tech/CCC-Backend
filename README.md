@@ -70,6 +70,25 @@ $ mau deploy
 
 With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
 
+## CCC transactional email environment variables
+
+SMTP is configured via the existing Nest `mail.*` settings. Deeplinks in emails use these optional **root** variables (omit trailing slash on URLs):
+
+| Variable | Purpose |
+|----------|---------|
+| `CCC_PUBLIC_WEB_URL` | Web app root (profiles, roadmap links, assessments path, field-mentor invite fallback). |
+| `CCC_ANDROID_APP_URL` | Google Play listing or intent link in email footers. |
+| `CCC_IOS_APP_URL` | App Store link in email footers. |
+| `CCC_PROFILE_URL_TEMPLATE` | Optional; default `{web}/profile/{userId}`. |
+| `CCC_ROADMAP_URL_TEMPLATE` | Optional; default `{web}/roadmaps/{roadmapId}`. |
+| `CCC_ASSESSMENTS_PATH` | Optional path segment for assessment links (default `assessments`). |
+| `CCC_INTEREST_APPROVED_HTML` | Overrides default HTML for acceptance email body. |
+| `CCC_COURSE_OVERVIEW_HTML` | Overrides course overview email body (HTML paragraph list). |
+| `CCC_FIELD_MENTOR_INVITE_URL_TEMPLATE` | Full invite URL with `{token}` placeholder (URL-encoded automatically). Takes precedence over the path fallback. |
+| `CCC_FIELD_MENTOR_INVITE_PATH` | If no template is set: path under `CCC_PUBLIC_WEB_URL` (default `accept-field-mentor`; query `?token=` is appended). |
+
+**Zoom / mentorship sessions:** creation, reschedule, and cancellation emails are sent from the appointments module (`MailerService.sendAppointmentConfirmed`, `sendAppointmentRescheduled`, `sendAppointmentCancellation`).
+
 ## Resources
 
 Check out a few resources that may come in handy when working with NestJS:

@@ -12,9 +12,12 @@ import { HomeModule } from '../home/home.module';
 import { User, UserSchema } from '../users/schemas/user.schema';
 import { Availability, AvailabilitySchema } from '../appointments/schemas/availability.schema';
 import { AppointmentsModule } from '../appointments/appointments.module';
+import { MailerService } from 'src/common/utils/mail.util';
+import { ConfigModule } from '@nestjs/config';
 
 @Module({
     imports: [
+        ConfigModule,
         MongooseModule.forFeature([
             { name: RoadMap.name, schema: RoadMapSchema },
             { name: Comments.name, schema: CommentsSchema },
@@ -29,7 +32,7 @@ import { AppointmentsModule } from '../appointments/appointments.module';
          AppointmentsModule
     ],
     controllers: [RoadMapsController],
-    providers: [RoadMapsService],
+    providers: [RoadMapsService, MailerService],
     exports: [RoadMapsService],
 })
 export class RoadMapsModule { }

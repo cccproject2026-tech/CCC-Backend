@@ -10,9 +10,12 @@ import { S3Module } from '../s3/s3.module';
 import { MulterModule } from '@nestjs/platform-express';
 import { AssessmentAssigned, AssessmentAssignedSchema } from './schemas/assessment_assigned';
 import { HomeModule } from '../home/home.module';
+import { MailerService } from 'src/common/utils/mail.util';
+import { ConfigModule } from '@nestjs/config';
 
 @Module({
   imports: [
+    ConfigModule,
     MongooseModule.forFeature([
       { name: Assessment.name, schema: AssessmentSchema },
       { name: User.name, schema: UserSchema },
@@ -27,6 +30,6 @@ import { HomeModule } from '../home/home.module';
     }),
   ],
   controllers: [AssessmentController],
-  providers: [AssessmentService],
+  providers: [AssessmentService, MailerService],
 })
 export class AssessmentModule { }
