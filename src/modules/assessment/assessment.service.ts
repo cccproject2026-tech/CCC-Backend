@@ -19,6 +19,7 @@ import { AssessmentAssigned, AssessmentAssignedDocument } from './schemas/assess
 import { HomeService } from '../home/home.service';
 import { MailerService } from '../../common/utils/mail.util';
 import { ROLES } from '../../common/constants/roles.constants';
+import { assessmentSectionRecommendationNotification } from '../../common/utils/notification-copy.util';
 
 @Injectable()
 export class AssessmentService {
@@ -761,10 +762,25 @@ export class AssessmentService {
       );
     }
 
+    const assessmentLean = await this.assessmentModel
+      .findById(assessmentId)
+      .select('sections')
+      .lean();
+    let sectionTitle: string | undefined;
+    const sid = sectionId.trim();
+    if (assessmentLean?.sections?.length) {
+      const match = assessmentLean.sections.find(
+        (sec: { _id?: Types.ObjectId; title?: string }) =>
+          sec._id && String(sec._id) === sid,
+      );
+      sectionTitle = match?.title;
+    }
+    const rec = assessmentSectionRecommendationNotification(sectionTitle);
+
     await this.notificationService.addNotification({
       userId,
-      name: 'ASSESSMENT_RECOMMENDATION',
-      details: `New recommendation has been added to your assessment.`,
+      name: rec.name,
+      details: rec.details,
       module: 'ASSESSMENT'
     });
 

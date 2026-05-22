@@ -24,8 +24,7 @@ import { MailerService } from 'src/common/utils/mail.util';
 import { ConfigService } from '@nestjs/config';
 import { ROLES } from 'src/common/constants/roles.constants';
 import { USER_APPLICATION_STATUSES } from 'src/common/constants/status.constants';
-
-@Injectable()
+import { microGrantStatusNotification } from 'src/common/utils/notification-copy.util';
 export class MicroGrantService {
   constructor(
     @InjectModel(MicroGrantForm.name)
@@ -166,9 +165,10 @@ export class MicroGrantService {
 
     await this.notificationService.addNotification({
       userId: dto.userId,
-      name: "Microgrant Application Submitted",
-      details: "Your microgrant application has been submitted successfully.",
-      module: "microgrant"
+      name: 'Micro-grant submitted',
+      details:
+        'Your micro-grant application was sent to the CCC team. You will get another alert when a director reviews it.',
+      module: 'microgrant'
     });
 
     const applicant = await this.userModel.findById(dto.userId).select('firstName lastName email role').lean();
@@ -221,9 +221,9 @@ export class MicroGrantService {
       }
       await this.notificationService.addNotification({
         userId: did,
-        name: "New Microgrant Application",
-        details: "A new microgrant application has been submitted.",
-        module: "microgrant"
+        name: 'Micro-grant ready to review',
+        details: `${applicantName || 'A participant'} submitted a micro-grant application. Open CCC to review and update the status.`,
+        module: 'microgrant'
       });
     }
 
@@ -292,11 +292,13 @@ export class MicroGrantService {
       throw new NotFoundException('Application not found');
     }
 
+    const mg = microGrantStatusNotification(status);
+
     await this.notificationService.addNotification({
       userId: application.userId.toString(),
-      name: "Microgrant Status Updated",
-      details: `Your microgrant application status is now: ${status}.`,
-      module: "microgrant"
+      name: mg.name,
+      details: mg.details,
+      module: 'microgrant'
     });
 
     const applicant = await this.userModel
