@@ -176,18 +176,32 @@ export class MailerService {
 </table>`;
     }
 
-    async sendOtpEmail(email: string, otp: string) {
-        const subject = 'Your OTP Code';
+    /** @param purpose use `password_reset` for recovery copy; default is sign-in / verification. */
+    async sendOtpEmail(email: string, otp: string, purpose?: string) {
+        const isReset = purpose === 'password_reset';
+        const subject = isReset ? 'Reset Your CCC Password' : 'Your OTP Code';
         const safeOtp = escapeEmailHtml(otp);
-        const text = `Your OTP code is ${otp}. It will expire in 10 minutes.`;
-        const inner = `
+        const text = isReset
+            ? `Hi,\n\nWe received a request to reset your CCC password. Use this verification code: ${otp}\nValid for 10 minutes. If you did not request this, ignore this email.`
+            : `Your OTP code is ${otp}. It will expire in 10 minutes.`;
+        const inner = isReset
+            ? `
+${this.greetingParagraph('there')}
+${this.proseParagraph('We received a request to reset your CCC account password.', '10px')}
+${this.proseParagraph('Please use the verification code below. It is valid for <b>10 minutes</b>. Please do not share this code with anyone.', '20px')}
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:8px 0 20px;"><tr><td style="padding:18px 24px;background:#f1f5f9;border-radius:10px;border:1px dashed #cbd5e1;text-align:center;">
+  <p style="margin:0;font-size:12px;color:${this.emailMuted};letter-spacing:0.06em;text-transform:uppercase;">Reset code</p>
+  <p style="margin:8px 0 0;font-size:28px;font-weight:700;letter-spacing:0.25em;color:${this.emailInk};font-family:ui-monospace,Consolas,monospace;">${safeOtp}</p>
+</td></tr></table>
+${this.proseParagraph('If you did not request a password reset, you can safely ignore this email.', '0')}`
+            : `
 ${this.proseParagraph('Use this one-time code to complete your sign-in. It expires in <b>10 minutes</b>.', '20px')}
 <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:8px 0 20px;"><tr><td style="padding:18px 24px;background:#f1f5f9;border-radius:10px;border:1px dashed #cbd5e1;text-align:center;">
   <p style="margin:0;font-size:12px;color:${this.emailMuted};letter-spacing:0.06em;text-transform:uppercase;">Your code</p>
   <p style="margin:8px 0 0;font-size:28px;font-weight:700;letter-spacing:0.25em;color:${this.emailInk};font-family:ui-monospace,Consolas,monospace;">${safeOtp}</p>
 </td></tr></table>
 ${this.proseParagraph('If you didn’t request this, you can safely ignore this email.', '0')}`;
-        const html = this.layoutEmail('Sign-in verification', '#fde68a', inner);
+        const html = this.layoutEmail(isReset ? 'Password reset' : 'Sign-in verification', '#fde68a', inner);
         await this.sendMail(email, subject, text, html);
     }
 
@@ -364,6 +378,19 @@ ${this.proseParagraph('<span style="color:' + this.emailMuted + ';">Changed plan
         return userId ? `${w}/${path}?userHint=${encodeURIComponent(userId)}` : `${w}/${path}`;
     }
 
+    private dashboardUrl(userId?: string): string {
+        const w = this.publicWeb();
+        if (!w) return '';
+        return userId ? `${w}?userHint=${encodeURIComponent(userId)}` : w;
+    }
+
+    microGrantApplicantPortalUrl(applicationId?: string): string {
+        const w = this.publicWeb();
+        if (!w) return '';
+        const seg = this.configService.get<string>('CCC_MICROGRANT_PORTAL_PATH')?.replace(/^\/+/, '').replace(/\/$/, '') || 'microgrant';
+        return applicationId ? `${w}/${seg}/${encodeURIComponent(applicationId)}` : `${w}/${seg}`;
+    }
+
     private appLinksSnippetText(): string {
         const web = this.publicWeb();
         const andr = this.androidUrl();
@@ -416,7 +443,7 @@ ${this.appLinksSnippetHtml()}`;
             this.appLinksSnippetText();
         await this.emit(
             opts.to,
-            'We received your interest form',
+            'Interest Form Successfully Submitted',
             text,
             this.wrapBranded('Interest form submitted', '#93c5fd', body),
         );
@@ -425,23 +452,26 @@ ${this.appLinksSnippetHtml()}`;
     async sendInterestApprovedNextSteps(opts: { to: string; firstName: string }) {
         const custom = this.optionalBodyFromConfig(
             'CCC_INTEREST_APPROVED_HTML',
-            '<p style="margin:0 0 14px;"><strong>Welcoming you to CCC.</strong></p><p style="margin:0;">Your application has been accepted. Sign in with the CCC web app or mobile app to begin onboarding, meet your cohort resources, and start your mentorship journey.</p>',
-            'Your application has been accepted. Sign in via the CCC web or mobile apps to continue.',
+            `<p style="margin:0 0 14px;"><strong>Great news! Your interest submission has been reviewed and approved.</strong></p>
+            <p style="margin:0 0 14px;">You can now log in to your account to view the next steps and continue your journey.</p>
+            <p style="margin:0;">Please sign in on the web or download the Centre for Community Change mobile app. If you have any questions, feel free to contact us.</p>`,
+            'Great news — your interest submission has been approved. Log in to continue. If you have questions, contact us.',
         );
 
         const body = `
 ${this.greetingParagraph(opts.firstName)}
 <div style="margin:0 0 20px;line-height:1.65;color:#334155;font-size:15px;">${custom.html}</div>
+${this.proseParagraph('<strong>Welcome aboard!</strong>', '14px')}
 <table role="presentation" width="100%" style="margin:0 0 20px;border-radius:10px;border:1px solid ${this.emailBorder};background:#f8fafc;"><tr><td style="padding:14px 18px;font-size:13px;line-height:1.5;color:${this.emailMuted};">Tip: bookmark the CCC web app link on desktop and install the mobile app for session reminders.</td></tr></table>
 ${this.appLinksSnippetHtml()}`;
         const text =
-            `Hi ${opts.firstName},\n\n${custom.text}` + this.appLinksSnippetText();
+            `Hi ${opts.firstName},\n\n${custom.text}\n\nWelcome aboard!` + this.appLinksSnippetText();
 
         await this.emit(
             opts.to,
-            'Your CCC application has been accepted',
+            'Your Interest Has Been Approved',
             text,
-            this.wrapBranded('Application accepted', '#86efac', body),
+            this.wrapBranded('Interest approved', '#86efac', body),
         );
     }
 
@@ -665,15 +695,15 @@ ${this.appLinksSnippetHtml()}`;
         const body = `
 ${this.greetingParagraph(opts.firstName)}
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 12px;border-radius:10px;background:#ecfdf5;border:1px solid #bbf7d0;"><tr><td style="padding:18px 20px;text-align:center;">
-<p style="margin:0;font-size:15px;font-weight:700;color:#166534;line-height:1.4;">All required course milestones are complete.</p>
-<p style="margin:10px 0 0;font-size:14px;color:#15803d;line-height:1.5;">Thank you for walking through CCC with diligence—your facilitator will share any wrap-up instructions.</p>
+<p style="margin:0;font-size:15px;font-weight:700;color:#166534;line-height:1.4;">Congratulations — you’ve successfully completed your program milestones.</p>
+<p style="margin:10px 0 0;font-size:14px;color:#15803d;line-height:1.5;">Log in to review your status. Your certificate will be available when your facilitator issues it.</p>
 </td></tr></table>
 ${this.appLinksSnippetHtml()}`;
         await this.emit(
             opts.to,
-            'Course completed — CCC',
-            `Hi ${opts.firstName},\n\nCongratulations — course completed.` + this.appLinksSnippetText(),
-            this.wrapBranded('Course completed', '#86efac', body),
+            'Congratulations — Your Program Is Complete',
+            `Hi ${opts.firstName},\n\nCongratulations — you have completed your program milestones.` + this.appLinksSnippetText(),
+            this.wrapBranded('Program complete', '#86efac', body),
         );
     }
 
@@ -681,15 +711,15 @@ ${this.appLinksSnippetHtml()}`;
         const body = `
 ${this.greetingParagraph(opts.firstName)}
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 12px;border-radius:10px;background:linear-gradient(135deg,#fffbeb,#fef9c3);border:1px solid #fcd34d;"><tr><td style="padding:18px 20px;text-align:center;">
-<p style="margin:0;font-size:15px;font-weight:700;color:#92400e;">Your CCC certificate has been issued</p>
-<p style="margin:10px 0 0;font-size:14px;color:#a16207;line-height:1.55;">Open your dashboard to download or share official documents.</p>
+<p style="margin:0;font-size:16px;font-weight:700;color:#92400e;">You’re officially complete!</p>
+<p style="margin:10px 0 0;font-size:14px;color:#a16207;line-height:1.55;">Your certificate is ready. Log in to download it and celebrate this achievement — we’re proud of the work you’ve accomplished.</p>
 </td></tr></table>
 ${this.appLinksSnippetHtml()}`;
         await this.emit(
             opts.to,
-            'Certificate issued — CCC',
-            `Hi ${opts.firstName},\n\nYour certificate has been issued.` + this.appLinksSnippetText(),
-            this.wrapBranded('Certificate', '#fcd34d', body),
+            'Your Certificate Has Been Issued',
+            `Hi ${opts.firstName},\n\nCongratulations — your certificate is ready. Log in to download it.` + this.appLinksSnippetText(),
+            this.wrapBranded('Certificate ready', '#fcd34d', body),
         );
     }
 
@@ -702,20 +732,23 @@ ${this.appLinksSnippetHtml()}`;
         const link = (opts.invitationLink ?? '').trim();
         const body = `
 ${this.greetingParagraph(opts.invitedFirstName)}
-${this.proseParagraph(`<strong>${escapeEmailHtml(opts.inviterName)}</strong> invited you to become a <strong>Field Mentor</strong> for CCC—a leadership role alongside our mentor community.`, '18px')}
+${this.proseParagraph('Congratulations on completing your program!', '10px')}
+${this.proseParagraph(`Based on your achievement, <strong>${escapeEmailHtml(opts.inviterName)}</strong> has invited you to become a <strong>Field Mentor</strong> — an opportunity to guide others as they begin their journey.`, '18px')}
 ${
             link
                 ? this.primaryCta(link, 'Review invitation')
                 : `<p style="margin:14px 0;font-size:14px;color:${this.emailMuted};">Invitation link unavailable—ask your coordinator to resend.</p>`
         }
+${this.proseParagraph('We’re excited about what’s ahead.', '0')}
 ${this.appLinksSnippetHtml()}`;
         const text =
-            `Hi ${opts.invitedFirstName},\n\n${opts.inviterName} invited you to become a Field Mentor.\nReview: ${opts.invitationLink}` +
+            `Hi ${opts.invitedFirstName},\n\nCongratulations — you're invited to become a Field Mentor.\n${opts.inviterName} sent this invitation.` +
+            (link ? `\nReview: ${link}` : '') +
             this.appLinksSnippetText();
 
         await this.emit(
             opts.to,
-            'Field mentor invitation — CCC',
+            'You’re Invited to Become a Field Mentor',
             text,
             this.wrapBranded('Field mentor invitation', '#93c5fd', body),
         );
@@ -752,5 +785,314 @@ ${this.appLinksSnippetHtml()}`;
             `Hi ${opts.recipientName},\nSession: ${opts.sessionTitle}\nWith: ${opts.counterpartName}\nWhen: ${when}${opts.joinUrl ? `\nJoin: ${opts.joinUrl}` : ''}`,
             this.wrapBranded('Mentorship session', '#93c5fd', body),
         );
+    }
+
+    /** Director inbox — new interest submission. */
+    async sendDirectorNewInterestSubmission(opts: {
+        to: string;
+        directorFirstName: string;
+        applicantName: string;
+        applicantRoleLabel: string;
+        submittedAtIso: string;
+    }) {
+        const body = `
+${this.greetingParagraph(opts.directorFirstName)}
+${this.proseParagraph(
+            `<strong>${escapeEmailHtml(opts.applicantName)}</strong> (${escapeEmailHtml(opts.applicantRoleLabel)}) has submitted an interest form and it is ready for your review.`,
+            '16px',
+        )}
+<table role="presentation" width="100%" style="margin:0 0 18px;border:1px solid ${this.emailBorder};border-radius:10px;background:#fafafa;"><tr><td style="padding:16px 18px;font-size:14px;color:${this.emailInk};">
+<p style="margin:0 0 6px;"><strong>Applicant</strong> · ${escapeEmailHtml(opts.applicantName)}</p>
+<p style="margin:0 0 6px;"><strong>Role</strong> · ${escapeEmailHtml(opts.applicantRoleLabel)}</p>
+<p style="margin:0;"><strong>Submitted</strong> · ${escapeEmailHtml(opts.submittedAtIso)}</p>
+</td></tr></table>
+${this.proseParagraph('Log in to your Director dashboard to review the details and take the next steps.', '0')}
+${this.appLinksSnippetHtml()}`;
+        const text =
+            `Hi ${opts.directorFirstName},\n\n${opts.applicantName} (${opts.applicantRoleLabel}) submitted an interest form.\nSubmitted: ${opts.submittedAtIso}\n\nReview in your director dashboard.` +
+            this.appLinksSnippetText();
+        await this.emit(opts.to, 'New Interest Submission Received', text, this.wrapBranded('New interest', '#93c5fd', body));
+    }
+
+    /** Pastor / mentee — mentor assigned with richer context (optional community & program lines). */
+    async sendInterestApprovedMentorAssigned(opts: {
+        to: string;
+        firstName: string;
+        mentorName: string;
+        communityName?: string;
+        programName?: string;
+    }) {
+        const extras: string[] = [];
+        if (opts.communityName?.trim()) extras.push(`<strong>Community</strong> · ${escapeEmailHtml(opts.communityName.trim())}`);
+        if (opts.programName?.trim()) extras.push(`<strong>Program</strong> · ${escapeEmailHtml(opts.programName.trim())}`);
+        const extraBlock =
+            extras.length > 0 ?
+                `<table role="presentation" width="100%" style="margin:0 0 18px;border-left:4px solid ${this.emailAccentBlue};background:#eff6ff;padding:14px 18px;border-radius:0 10px 10px 0;">
+${extras.map((line) => `<p style="margin:0 0 8px;font-size:14px;color:#1e3a8a;">${line}</p>`).join('')}
+</table>`
+            :   '';
+        const body = `
+${this.greetingParagraph(opts.firstName)}
+${this.proseParagraph('Great news! Your interest submission has been approved. You’ve also been assigned a mentor to guide you.', '14px')}
+<table role="presentation" width="100%" style="margin:0 0 16px;border:1px solid ${this.emailBorder};border-radius:10px;background:#fafafa;"><tr><td style="padding:16px 18px;">
+<p style="margin:0;font-size:13px;color:${this.emailMuted};text-transform:uppercase;letter-spacing:0.05em;">Mentor</p>
+<p style="margin:6px 0 0;font-size:18px;font-weight:700;">${escapeEmailHtml(opts.mentorName)}</p>
+</td></tr></table>
+${extraBlock}
+${this.proseParagraph('Please log in to your account to view details and begin connecting with your mentor. We’re excited to support you!', '20px')}
+${this.appLinksSnippetHtml()}`;
+        const text =
+            `Hi ${opts.firstName},\n\nApproved — your mentor is ${opts.mentorName}.` +
+            (opts.communityName ? `\nCommunity: ${opts.communityName}` : '') +
+            (opts.programName ? `\nProgram: ${opts.programName}` : '') +
+            this.appLinksSnippetText();
+        await this.emit(opts.to, 'Your Interest Has Been Approved', text, this.wrapBranded('Mentor assigned', '#86efac', body));
+    }
+
+    async sendYouHaveBeenAssignedMentor(opts: {
+        to: string;
+        pastorFirstName: string;
+        mentorName: string;
+        mentorProfileUrl?: string;
+    }) {
+        const body = `
+${this.greetingParagraph(opts.pastorFirstName)}
+${this.proseParagraph(`<strong>${escapeEmailHtml(opts.mentorName)}</strong> has been assigned as your mentor.`, '16px')}
+${this.proseParagraph('Log in to view your mentor’s profile and begin connecting.', '20px')}
+${opts.mentorProfileUrl ? this.primaryCta(opts.mentorProfileUrl, 'View mentor profile') : ''}
+${this.appLinksSnippetHtml()}`;
+        const text =
+            `Hi ${opts.pastorFirstName},\n\n${opts.mentorName} has been assigned as your mentor.` +
+            (opts.mentorProfileUrl ? `\nProfile: ${opts.mentorProfileUrl}` : '') +
+            this.appLinksSnippetText();
+        await this.emit(opts.to, 'You’ve Been Assigned a Mentor', text, this.wrapBranded('New mentor', '#fde68a', body));
+    }
+
+    async sendYouHaveBeenAssignedNewMentee(opts: {
+        to: string;
+        mentorFirstName: string;
+        menteeName: string;
+        menteeProfileUrl?: string;
+    }) {
+        const body = `
+${this.greetingParagraph(opts.mentorFirstName)}
+${this.proseParagraph(`<strong>${escapeEmailHtml(opts.menteeName)}</strong> has been assigned to you as a mentee.`, '16px')}
+${this.proseParagraph('Log in to your dashboard to review their details and begin mentoring. Thank you for your leadership.', '20px')}
+${opts.menteeProfileUrl ? this.primaryCta(opts.menteeProfileUrl, 'View mentee profile') : ''}
+${this.appLinksSnippetHtml()}`;
+        const text =
+            `Hi ${opts.mentorFirstName},\n\n${opts.menteeName} is now assigned as your mentee.` +
+            (opts.menteeProfileUrl ? `\nProfile: ${opts.menteeProfileUrl}` : '') +
+            this.appLinksSnippetText();
+        await this.emit(opts.to, 'You’ve Been Assigned a New Mentee', text, this.wrapBranded('New mentee', '#bfdbfe', body));
+    }
+
+    async sendMenteeRemovedFromMentorEmail(opts: { to: string; firstName: string; mentorName: string }) {
+        const body = `
+${this.greetingParagraph(opts.firstName)}
+${this.proseParagraph(`Your mentorship assignment with <strong>${escapeEmailHtml(opts.mentorName)}</strong> has been updated. You are no longer assigned to this mentor at this time.`, '18px')}
+${this.proseParagraph('If you have questions or would like to request a new mentor, please log in to your account. We’re here to support you.', '0')}
+${this.appLinksSnippetHtml()}`;
+        const text = `Hi ${opts.firstName},\n\nYou were unassigned from mentor ${opts.mentorName}.` + this.appLinksSnippetText();
+        await this.emit(opts.to, 'Update to Your Mentor Assignment', text, this.wrapBranded('Assignment update', '#fde68a', body));
+    }
+
+    async sendMentorMenteeRemovedEmail(opts: { to: string; mentorFirstName: string; menteeName: string }) {
+        const body = `
+${this.greetingParagraph(opts.mentorFirstName)}
+${this.proseParagraph(`<strong>${escapeEmailHtml(opts.menteeName)}</strong> has been unassigned from you by the Director.`, '18px')}
+${this.proseParagraph('Log in to your dashboard to view your updated mentee list. Thank you for your continued support.', '0')}
+${this.appLinksSnippetHtml()}`;
+        const text = `Hi ${opts.mentorFirstName},\n\n${opts.menteeName} was unassigned from you.` + this.appLinksSnippetText();
+        await this.emit(opts.to, 'Mentee Assignment Update', text, this.wrapBranded('Mentee list updated', '#fca5a5', body));
+    }
+
+    async sendMentorMenteeCompletedProgram(opts: { to: string; mentorFirstName: string; menteeName: string }) {
+        const body = `
+${this.greetingParagraph(opts.mentorFirstName)}
+${this.proseParagraph(`Great news — <strong>${escapeEmailHtml(opts.menteeName)}</strong> has completed the program successfully.`, '16px')}
+${this.proseParagraph('Thank you for your mentorship and support throughout the journey.', '0')}
+${this.appLinksSnippetHtml()}`;
+        const text = `Hi ${opts.mentorFirstName},\n\n${opts.menteeName} completed the program. Thank you for mentoring them.`;
+        await this.emit(opts.to, 'Your Mentee Has Completed the Program', text, this.wrapBranded('Mentee complete', '#86efac', body));
+    }
+
+    async sendDirectorCertificateIssued(opts: {
+        to: string;
+        directorFirstName: string;
+        recipientName: string;
+        courseName?: string;
+        profileUrl?: string;
+    }) {
+        const body = `
+${this.greetingParagraph(opts.directorFirstName)}
+${this.proseParagraph(`A certificate has been issued to <strong>${escapeEmailHtml(opts.recipientName)}</strong>${opts.courseName ? ` for <strong>${escapeEmailHtml(opts.courseName)}</strong>` : ''}.`, '18px')}
+${opts.profileUrl ? this.primaryCta(opts.profileUrl, 'View profile') : ''}
+${this.appLinksSnippetHtml()}`;
+        const text = `Hi ${opts.directorFirstName},\n\nCertificate issued for ${opts.recipientName}.`;
+        await this.emit(opts.to, 'Certificate Issued', text, this.wrapBranded('Certificate', '#fcd34d', body));
+    }
+
+    async sendFieldMentorAcceptedDirector(opts: {
+        to: string;
+        directorFirstName: string;
+        newFieldMentorName: string;
+        profileUrl?: string;
+    }) {
+        const body = `
+${this.greetingParagraph(opts.directorFirstName)}
+${this.proseParagraph(`<strong>${escapeEmailHtml(opts.newFieldMentorName)}</strong> has accepted the invitation to become a Field Mentor. Their role has been successfully updated.`, '18px')}
+${opts.profileUrl ? this.primaryCta(opts.profileUrl, 'View profile') : ''}
+${this.appLinksSnippetHtml()}`;
+        const text = `Hi ${opts.directorFirstName},\n\n${opts.newFieldMentorName} accepted the Field Mentor invitation.`;
+        await this.emit(opts.to, 'Field Mentor Invitation Accepted', text, this.wrapBranded('Invitation accepted', '#86efac', body));
+    }
+
+    async sendFieldMentorRoleActivated(opts: { to: string; firstName: string }) {
+        const dash = this.dashboardUrl();
+        const body = `
+${this.greetingParagraph(opts.firstName)}
+${this.proseParagraph('Welcome aboard! Your Field Mentor role has been activated. You now have access to mentor tools in your dashboard.', '16px')}
+${this.proseParagraph('Log in to explore your new role and start making an impact.', '22px')}
+${dash ? this.primaryCta(dash, 'Open dashboard') : ''}
+${this.appLinksSnippetHtml()}`;
+        const text =
+            `Hi ${opts.firstName},\n\nYou're officially a Field Mentor. Log in to explore your dashboard.` + this.appLinksSnippetText();
+        await this.emit(opts.to, 'You’re Officially a Field Mentor', text, this.wrapBranded('Welcome', '#93c5fd', body));
+    }
+
+    async sendAccountDeletedFarewell(opts: { to: string; firstName: string }) {
+        const body = `
+${this.greetingParagraph(opts.firstName)}
+${this.proseParagraph('Your account has been successfully deleted.', '16px')}
+${this.proseParagraph('We appreciate the time you spent with us. If you ever decide to come back, we’d be happy to welcome you again.', '10px')}
+${this.proseParagraph('Take care!', '0')}
+${this.appLinksSnippetHtml()}`;
+        const text = `Hi ${opts.firstName},\n\nYour account has been deleted.`;
+        await this.emit(opts.to, 'We’re Sorry to See You Go', text, this.wrapBranded('Account deleted', '#94a3b8', body));
+    }
+
+    async sendDirectorUserAccountDeleted(opts: { to: string; directorFirstName: string; deletedUserName: string }) {
+        const body = `
+${this.greetingParagraph(opts.directorFirstName)}
+${this.proseParagraph(`<strong>${escapeEmailHtml(opts.deletedUserName)}</strong> has deleted their CCC account. Their profile and platform access have been removed.`, '0')}
+${this.appLinksSnippetHtml()}`;
+        await this.emit(opts.to, 'Pastor Account Deleted', `Hi ${opts.directorFirstName},\n\n${opts.deletedUserName} deleted their account.`, this.wrapBranded('Account removed', '#fca5a5', body));
+    }
+
+    async sendMentorNotifiedMenteeDeleted(opts: { to: string; mentorFirstName: string; menteeName: string }) {
+        const body = `
+${this.greetingParagraph(opts.mentorFirstName)}
+${this.proseParagraph(`<strong>${escapeEmailHtml(opts.menteeName)}</strong> has deleted their CCC account. They are no longer on your mentee list.`, '18px')}
+${this.proseParagraph('Log in to your Mentor dashboard to review your updated list.', '0')}
+${this.appLinksSnippetHtml()}`;
+        await this.emit(
+            opts.to,
+            'Update to Your Mentee Assignment',
+            `Hi ${opts.mentorFirstName},\n\n${opts.menteeName} deleted their account.`,
+            this.wrapBranded('Mentee removed', '#fde68a', body),
+        );
+    }
+
+    async sendMentorProfileDeactivated(opts: { to: string; firstName: string }) {
+        const body = `
+${this.greetingParagraph(opts.firstName)}
+${this.proseParagraph('We’re writing to let you know that your mentor profile has been removed from CCC. You no longer have access to mentor features at this time.', '16px')}
+${this.proseParagraph('If you have questions, please contact support.', '0')}`;
+        await this.emit(
+            opts.to,
+            'Update to Your Mentor Account',
+            `Hi ${opts.firstName},\n\nYour mentor profile was removed.`,
+            this.wrapBranded('Mentor access', '#fca5a5', body),
+        );
+    }
+
+    async sendPastorMentorRemovedBySystem(opts: { to: string; pastorFirstName: string; mentorName: string }) {
+        const body = `
+${this.greetingParagraph(opts.pastorFirstName)}
+${this.proseParagraph(`Your mentorship assignment with <strong>${escapeEmailHtml(opts.mentorName)}</strong> has been updated — they are no longer assigned as your mentor.`, '16px')}
+${this.proseParagraph('We’ll notify you once a new mentor is assigned. If you have questions, log in or contact support.', '0')}
+${this.appLinksSnippetHtml()}`;
+        await this.emit(
+            opts.to,
+            'Update to Your Mentor Assignment',
+            `Assignment updated — ${opts.mentorName} is no longer your mentor.`,
+            this.wrapBranded('Mentor update', '#fde68a', body),
+        );
+    }
+
+    async sendAccountAccessRemoved(opts: { to: string; firstName: string }) {
+        const body = `
+${this.greetingParagraph(opts.firstName)}
+${this.proseParagraph('We’re writing to inform you that your CCC profile has been removed. You no longer have access to the platform at this time.', '16px')}
+${this.proseParagraph('If you believe this was made in error, please contact support.', '0')}`;
+        await this.emit(opts.to, 'Update to Your CCC Account', `Hi ${opts.firstName},\n\nYour CCC profile was removed.`, this.wrapBranded('Access removed', '#fca5a5', body));
+    }
+
+    /** After password change via profile/settings (not OTP body). */
+    async sendPasswordChangedConfirmation(opts: { to: string; firstName: string }) {
+        const body = `
+${this.greetingParagraph(opts.firstName)}
+${this.proseParagraph('This is a confirmation that your account password has been successfully changed.', '14px')}
+${this.proseParagraph('If you made this change, no further action is needed. If you did <strong>not</strong> change your password, reset it immediately or contact support.', '20px')}
+${this.appLinksSnippetHtml()}`;
+        const text = `Hi ${opts.firstName},\n\nYour password was changed. If this wasn't you, contact support.`;
+        await this.emit(opts.to, 'Your Password Has Been Changed', text, this.wrapBranded('Security', '#e2e8f0', body));
+    }
+
+    async sendMicroGrantDirectorNew(opts: {
+        to: string;
+        directorFirstName: string;
+        applicantName: string;
+        applicantRole: string;
+        submittedAtIso: string;
+        reviewUrl?: string;
+    }) {
+        const body = `
+${this.greetingParagraph(opts.directorFirstName)}
+${this.proseParagraph(`<strong>${escapeEmailHtml(opts.applicantName)}</strong> has submitted a new micro-grant application.`, '14px')}
+<table role="presentation" width="100%" style="margin:0 0 16px;border:1px solid ${this.emailBorder};border-radius:10px;background:#fafafa;"><tr><td style="padding:14px 18px;font-size:14px;">
+<p style="margin:0 0 6px;"><strong>Applicant</strong> · ${escapeEmailHtml(opts.applicantName)}</p>
+<p style="margin:0 0 6px;"><strong>Role</strong> · ${escapeEmailHtml(opts.applicantRole)}</p>
+<p style="margin:0;"><strong>Submitted</strong> · ${escapeEmailHtml(opts.submittedAtIso)}</p>
+</td></tr></table>
+${opts.reviewUrl ? this.primaryCta(opts.reviewUrl, 'Review application') : this.proseParagraph('Log in to your Director dashboard to review.', '0')}
+${this.appLinksSnippetHtml()}`;
+        const text = `New micro-grant from ${opts.applicantName}. Submitted ${opts.submittedAtIso}.`;
+        await this.emit(opts.to, 'New Micro-Grant Application Received', text, this.wrapBranded('Micro-grant', '#c4b5fd', body));
+    }
+
+    async sendMicroGrantApplicantReceived(opts: { to: string; firstName: string; statusUrl?: string }) {
+        const body = `
+${this.greetingParagraph(opts.firstName)}
+${this.proseParagraph('We’ve received your micro-grant application. Our team will review your request and notify you once a decision has been made.', '16px')}
+${opts.statusUrl ? this.primaryCta(opts.statusUrl, 'View application status') : ''}
+${this.proseParagraph('Thanks for submitting — we’ll be in touch soon.', '0')}
+${this.appLinksSnippetHtml()}`;
+        const text = `Hi ${opts.firstName},\n\nWe received your micro-grant application.`;
+        await this.emit(opts.to, 'Your Micro-Grant Application Is In', text, this.wrapBranded('Application received', '#86efac', body));
+    }
+
+    async sendMicroGrantRejected(opts: { to: string; firstName: string; detailUrl?: string }) {
+        const body = `
+${this.greetingParagraph(opts.firstName)}
+${this.proseParagraph('Thank you for submitting a micro-grant application. After review, your application was not approved at this time.', '16px')}
+${opts.detailUrl ? this.primaryCta(opts.detailUrl, 'View application details') : ''}
+${this.proseParagraph('If you have questions, log in or contact the CCC Team.', '0')}
+${this.appLinksSnippetHtml()}`;
+        const text =
+            `Hi ${opts.firstName},\n\nYour micro-grant application was not approved at this time.` + this.appLinksSnippetText();
+        await this.emit(opts.to, 'Update on Your Micro-Grant Application', text, this.wrapBranded('Application update', '#fca5a5', body));
+    }
+
+    async sendMicroGrantPending(opts: { to: string; firstName: string; statusUrl?: string }) {
+        const body = `
+${this.greetingParagraph(opts.firstName)}
+${this.proseParagraph('Your micro-grant application has been moved to <strong>pending</strong> status. We may need additional time or information before a final decision.', '16px')}
+${opts.statusUrl ? this.primaryCta(opts.statusUrl, 'View status') : ''}
+${this.proseParagraph('We’ll notify you when there is an update.', '0')}
+${this.appLinksSnippetHtml()}`;
+        const text = `Hi ${opts.firstName},\n\nYour micro-grant is pending review.`;
+        await this.emit(opts.to, 'Your Micro-Grant Application Is Pending', text, this.wrapBranded('Pending', '#fde68a', body));
     }
 }

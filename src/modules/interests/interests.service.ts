@@ -121,11 +121,34 @@ export class InterestService {
       console.warn(`Failed to send notification for interest ${interest._id}:`, notificationError.message);
     }
 
-    void this.mailer.sendInterestSubmissionConfirmation({
-      to: dto.email,
-      firstName: dto.firstName,
-      applicantRoleHint: dto.title,
-    });
+    try {
+      void this.mailer.sendInterestSubmissionConfirmation({
+        to: dto.email,
+        firstName: dto.firstName,
+        applicantRoleHint: dto.title,
+      });
+    } catch (e: any) {
+      console.warn(`Interest applicant email skipped: ${e?.message}`);
+    }
+
+    try {
+      const applicantName = `${dto.firstName} ${dto.lastName}`;
+      const roleLabel = dto.title || 'Applicant';
+      const ca = (interest as { createdAt?: Date }).createdAt;
+      const submittedAtIso = (ca instanceof Date ? ca : new Date()).toUTCString();
+      const dirs = await this.usersService.listDirectorRecipients();
+      for (const dir of dirs) {
+        void this.mailer.sendDirectorNewInterestSubmission({
+          to: dir.email,
+          directorFirstName: dir.firstName,
+          applicantName,
+          applicantRoleLabel: roleLabel,
+          submittedAtIso,
+        });
+      }
+    } catch (dirMailErr: any) {
+      console.warn(`Director interest alert email skipped: ${dirMailErr?.message}`);
+    }
 
     return toInterestResponseDto(interest);
   }
