@@ -20,6 +20,10 @@ import {
 import { User, UserDocument } from '../users/schemas/user.schema';
 import { S3Service } from '../s3/s3.service';
 import { HomeService } from '../home/home.service';
+import { MailerService } from 'src/common/utils/mail.util';
+import { ConfigService } from '@nestjs/config';
+import { ROLES } from 'src/common/constants/roles.constants';
+import { USER_APPLICATION_STATUSES } from 'src/common/constants/status.constants';
 
 @Injectable()
 export class MicroGrantService {
@@ -32,6 +36,8 @@ export class MicroGrantService {
     private readonly userModel: Model<UserDocument>,
     private readonly s3Service: S3Service,
     private readonly notificationService: HomeService,
+    private readonly mailer: MailerService,
+    private readonly configService: ConfigService,
   ) { }
 
   async createOrUpdateForm(dto: CreateOrUpdateFormDto) {
@@ -165,11 +171,56 @@ export class MicroGrantService {
       module: "microgrant"
     });
 
-    const directors = await this.userModel.find({ role: "DIRECTOR" }).select("_id").lean();
+    const applicant = await this.userModel.findById(dto.userId).select('firstName lastName email role').lean();
+
+    if (applicant && (applicant as { email?: string }).email) {
+      void this.mailer.sendMicroGrantApplicantReceived({
+        to: (applicant as { email: string }).email,
+        firstName: (applicant as { firstName?: string }).firstName || 'there',
+        statusUrl:
+          this.mailer.microGrantApplicantPortalUrl((application._id as Types.ObjectId).toString()) || undefined,
+      });
+    }
+
+    const directors = await this.userModel
+      .find({ role: ROLES.DIRECTOR })
+      .select('_id email firstName')
+      .lean()
+      .exec();
+    const submittedAtIso = new Date(
+      (application as unknown as { createdAt?: Date }).createdAt?.getTime?.() ?? Date.now(),
+    ).toUTCString();
+
+    const applicantRole = (
+      applicant as { role?: string } | undefined | null)?.role || 'participant';
+    const applicantName = applicant ?
+      `${(applicant as any).firstName || ''} ${(applicant as any).lastName || ''}`.trim()
+    : dto.userId;
+    const web = (this.configService.get<string>('CCC_PUBLIC_WEB_URL') || '').trim().replace(/\/$/, '');
+    const reviewUrl =
+      (
+        web ?
+          `${web}/${this.configService.get<string>('CCC_DIRECTOR_MICROGRANT_PATH')?.trim().replace(/^\/+/, '').replace(/\/$/, '') || 'dashboard/micro-grants'}`
+        : ''
+
+      ).trim();
 
     for (const director of directors) {
+      const did = (director as { _id: Types.ObjectId })._id?.toString();
+      const de = (director as { email?: string }).email;
+      if (!did) continue;
+      if (de) {
+        void this.mailer.sendMicroGrantDirectorNew({
+          to: de,
+          directorFirstName: (director as { firstName?: string }).firstName || 'there',
+          applicantName: applicantName || 'Applicant',
+          applicantRole: applicantRole as string,
+          submittedAtIso,
+          reviewUrl: reviewUrl || undefined,
+        });
+      }
       await this.notificationService.addNotification({
-        userId: director._id.toString(),
+        userId: did,
         name: "New Microgrant Application",
         details: "A new microgrant application has been submitted.",
         module: "microgrant"
@@ -247,6 +298,33 @@ export class MicroGrantService {
       details: `Your microgrant application status is now: ${status}.`,
       module: "microgrant"
     });
+
+    const applicant = await this.userModel
+      .findById(application.userId)
+      .select('email firstName')
+      .lean();
+
+    const st = typeof status === 'string' ? status.trim().toLowerCase() : '';
+    const ae = applicant as { email?: string; firstName?: string } | null;
+    if (ae?.email) {
+      if (st === USER_APPLICATION_STATUSES.REJECTED.toLowerCase()) {
+        void this.mailer.sendMicroGrantRejected({
+          to: ae.email,
+          firstName: ae.firstName || 'there',
+          detailUrl:
+            this.mailer.microGrantApplicantPortalUrl((application._id as Types.ObjectId).toString()) || undefined,
+        });
+      }
+      if (st === USER_APPLICATION_STATUSES.PENDING.toLowerCase()) {
+        void this.mailer.sendMicroGrantPending({
+          to: ae.email,
+          firstName: ae.firstName || 'there',
+          statusUrl:
+            this.mailer.microGrantApplicantPortalUrl((application._id as Types.ObjectId).toString()) ||
+            undefined,
+        });
+      }
+    }
 
     return {
       message: `Application status updated to ${status}`,

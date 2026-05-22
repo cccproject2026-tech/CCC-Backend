@@ -44,6 +44,27 @@ export class UsersService {
         private readonly config: ConfigService,
     ) { }
 
+    /** Director users for operational email alerts. */
+    async listDirectorRecipients(): Promise<{ email: string; firstName: string }[]> {
+        const rows = await this.userModel.find({ role: ROLES.DIRECTOR }).select('email firstName').lean().exec();
+        return rows
+            .filter((r) => !!(r as { email?: string }).email)
+            .map((r) => ({
+                email: (r as { email: string }).email,
+                firstName: (r as { firstName?: string }).firstName || 'there',
+            }));
+    }
+
+    private isMentorHostRole(role?: string): boolean {
+        const r = (role || '').trim().toLowerCase();
+        return r === ROLES.MENTOR || r === ROLES.FIELD_MENTOR;
+    }
+
+    private isMenteeSideRole(role?: string): boolean {
+        const r = (role || '').trim().toLowerCase();
+        return r === ROLES.PASTOR || r === ROLES.LAY_LEADER || r === ROLES.SEMINARIAN;
+    }
+
     /** Human-readable label for assignment emails ("mentor", "pastor", or generic). */
     private connectionRoleLabel(counterpartRole: string): string {
         const r = (counterpartRole || '').trim().toLowerCase();
@@ -208,18 +229,76 @@ export class UsersService {
             dataToUpdate.password = await hashPassword(updateData.password);
         }
 
+        const passwordChangedFlag = !!(updateData as { password?: string }).password;
         const updated = await this.userModel
             .findByIdAndUpdate(id, dataToUpdate, { new: true, runValidators: true })
             .select('-password -refreshToken -uploadedDocuments')
             .exec();
         if (!updated) throw new NotFoundException('User not found');
 
+        if (passwordChangedFlag && updated.email) {
+            void this.mailer.sendPasswordChangedConfirmation({
+                to: updated.email,
+                firstName: updated.firstName || 'there',
+            });
+        }
+
         return toUserResponseDto(updated);
     }
 
     async delete(id: string): Promise<void> {
-        const result = await this.userModel.findByIdAndDelete(id).exec();
-        if (!result) throw new NotFoundException('User not found');
+        const doomed = await this.userModel.findById(id).select('firstName lastName email role assignedId').lean().exec();
+
+        if (!doomed) throw new NotFoundException('User not found');
+
+        const fullName = `${doomed.firstName} ${doomed.lastName}`;
+        const counterpartIds = doomed.assignedId || [];
+        const counterparts =
+            counterpartIds.length ?
+                await this.userModel.find({ _id: { $in: counterpartIds } }).select('email firstName role').lean().exec()
+            :   [];
+
+        for (const c of counterparts as { email?: string; firstName?: string; role?: string }[]) {
+            if (!c.email) continue;
+            if (this.isMenteeSideRole(doomed.role) && this.isMentorHostRole(c.role)) {
+                void this.mailer.sendMentorNotifiedMenteeDeleted({
+                    to: c.email,
+                    mentorFirstName: c.firstName || 'there',
+                    menteeName: fullName,
+                });
+            }
+            if (this.isMentorHostRole(doomed.role) && this.isMenteeSideRole(c.role)) {
+                void this.mailer.sendPastorMentorRemovedBySystem({
+                    to: c.email,
+                    pastorFirstName: c.firstName || 'there',
+                    mentorName: fullName,
+                });
+            }
+        }
+
+        if (this.isMentorHostRole(doomed.role) && doomed.email) {
+            void this.mailer.sendMentorProfileDeactivated({
+                to: doomed.email,
+                firstName: doomed.firstName || 'there',
+            });
+        } else if (doomed.email) {
+            void this.mailer.sendAccountDeletedFarewell({
+                to: doomed.email,
+                firstName: doomed.firstName || 'there',
+            });
+        }
+
+        if (this.isMenteeSideRole(doomed.role)) {
+            for (const d of await this.listDirectorRecipients()) {
+                void this.mailer.sendDirectorUserAccountDeleted({
+                    to: d.email,
+                    directorFirstName: d.firstName,
+                    deletedUserName: fullName,
+                });
+            }
+        }
+
+        await this.userModel.findByIdAndDelete(id).exec();
     }
 
     async saveRefreshToken(userId: string, token: string): Promise<void> {
@@ -273,56 +352,99 @@ export class UsersService {
         for (const target of targetUsers) {
             await this.notificationService.addNotification({
                 userId: target._id.toString(),
-                name: "Assigned",
+                name: 'Assigned',
                 details: `You have been assigned to ${assigningUser.firstName} ${assigningUser.lastName}.`,
-                module: "assignment",
+                module: 'assignment',
             });
 
+            const targetRole = (target as { role?: string }).role ?? '';
+            const assignerRole = assigningUser.role ?? '';
             const targetEmail = (target as { email?: string }).email;
-            if (targetEmail) {
-                void this.mailer.sendPartnerAssignedWithProfile({
-                    to: targetEmail,
-                    recipientFirstName: target.firstName,
-                    counterpartName: assignerName,
-                    counterpartUserId: assignerIdStr,
-                    counterpartRoleLabel: this.connectionRoleLabel(assignerLabel),
-                });
-            }
             const assignerEmail = (assigningUser as { email?: string }).email;
-            if (assignerEmail) {
-                void this.mailer.sendPartnerAssignedWithProfile({
-                    to: assignerEmail,
-                    recipientFirstName: assigningUser.firstName,
-                    counterpartName: `${target.firstName} ${target.lastName}`,
-                    counterpartUserId: target._id.toString(),
-                    counterpartRoleLabel: this.connectionRoleLabel((target as { role?: string }).role ?? ''),
-                });
+            const menteeFirst = target.firstName;
+            const mentorFirst = assigningUser.firstName;
+            const targetName = `${target.firstName} ${target.lastName}`;
+
+            if (this.isMentorHostRole(assignerRole) && this.isMenteeSideRole(targetRole)) {
+                if (targetEmail) {
+                    void this.mailer.sendYouHaveBeenAssignedMentor({
+                        to: targetEmail,
+                        pastorFirstName: menteeFirst,
+                        mentorName: assignerName,
+                        mentorProfileUrl: this.mailer.profileUrl(assignerIdStr) || undefined,
+                    });
+                }
+                if (assignerEmail) {
+                    void this.mailer.sendYouHaveBeenAssignedNewMentee({
+                        to: assignerEmail,
+                        mentorFirstName: mentorFirst,
+                        menteeName: targetName,
+                        menteeProfileUrl: this.mailer.profileUrl(target._id.toString()) || undefined,
+                    });
+                }
+            } else if (this.isMenteeSideRole(assignerRole) && this.isMentorHostRole(targetRole)) {
+                if (assignerEmail) {
+                    void this.mailer.sendYouHaveBeenAssignedMentor({
+                        to: assignerEmail,
+                        pastorFirstName: mentorFirst,
+                        mentorName: targetName,
+                        mentorProfileUrl: this.mailer.profileUrl(target._id.toString()) || undefined,
+                    });
+                }
+                if (targetEmail) {
+                    void this.mailer.sendYouHaveBeenAssignedNewMentee({
+                        to: targetEmail,
+                        mentorFirstName: menteeFirst,
+                        menteeName: assignerName,
+                        menteeProfileUrl: this.mailer.profileUrl(assignerIdStr) || undefined,
+                    });
+                }
+            } else {
+                if (targetEmail) {
+                    void this.mailer.sendPartnerAssignedWithProfile({
+                        to: targetEmail,
+                        recipientFirstName: target.firstName,
+                        counterpartName: assignerName,
+                        counterpartUserId: assignerIdStr,
+                        counterpartRoleLabel: this.connectionRoleLabel(assignerLabel),
+                    });
+                }
+                if (assignerEmail) {
+                    void this.mailer.sendPartnerAssignedWithProfile({
+                        to: assignerEmail,
+                        recipientFirstName: assigningUser.firstName,
+                        counterpartName: targetName,
+                        counterpartUserId: target._id.toString(),
+                        counterpartRoleLabel: this.connectionRoleLabel(targetRole),
+                    });
+                }
             }
         }
 
         await this.notificationService.addNotification({
             userId,
-            name: "Assigned",
+            name: 'Assigned',
             details: `You have been assigned to ${assigningUser.firstName} ${assigningUser.lastName}.`,
-            module: "assignment",
+            module: 'assignment',
         });
 
         return this.userModel.findById(userId).populate('assignedId');
     }
 
     async removeUsers(userId: string, dto: RemoveMentorMenteeDto) {
-        const user = await this.userModel.findById(userId);
-        if (!user) throw new NotFoundException('User not found');
+        const mentorAnchor = await this.userModel
+            .findById(userId)
+            .select('_id firstName lastName email role')
+            .lean();
+        if (!mentorAnchor) throw new NotFoundException('User not found');
 
-        const targetUsers = await this.userModel.find({
-            _id: { $in: dto.assignedId }
-        }).select('_id').lean();
+        const targetUsersFull = await this.userModel.find({ _id: { $in: dto.assignedId } }).select('_id firstName lastName email role').lean();
 
-        if (targetUsers.length !== dto.assignedId.length) {
+        if (targetUsersFull.length !== dto.assignedId.length) {
             throw new NotFoundException('One or more users not found');
         }
 
-        const targetIds = targetUsers.map(u => u._id);
+        const targetIds = targetUsersFull.map(u => u._id);
 
         await this.userModel.findByIdAndUpdate(
             userId,
@@ -330,10 +452,47 @@ export class UsersService {
             { new: true }
         );
 
-        await this.userModel.updateMany(
-            { _id: { $in: targetIds } },
-            { $pull: { assignedId: user._id } }
-        );
+        await this.userModel.updateMany({ _id: { $in: targetIds } }, { $pull: { assignedId: mentorAnchor._id } });
+
+        const mentorName = `${mentorAnchor.firstName} ${mentorAnchor.lastName}`;
+        const anchorRole = mentorAnchor.role ?? '';
+        const mentorEmail = mentorAnchor.email;
+
+        for (const t of targetUsersFull) {
+            const tRole = (t as { role?: string }).role ?? '';
+            const tEmail = (t as { email?: string }).email;
+            if (!tEmail) continue;
+            if (this.isMentorHostRole(anchorRole) && this.isMenteeSideRole(tRole)) {
+                void this.mailer.sendMenteeRemovedFromMentorEmail({
+                    to: tEmail,
+                    firstName: (t as { firstName?: string }).firstName || 'there',
+                    mentorName,
+                });
+                if (mentorEmail) {
+                    void this.mailer.sendMentorMenteeRemovedEmail({
+                        to: mentorEmail,
+                        mentorFirstName: mentorAnchor.firstName || 'there',
+                        menteeName: `${t.firstName} ${t.lastName}`,
+                    });
+                }
+            } else if (this.isMenteeSideRole(anchorRole) && this.isMentorHostRole(tRole)) {
+                if (mentorEmail) {
+                    void this.mailer.sendMenteeRemovedFromMentorEmail({
+                        to: mentorEmail,
+                        firstName: mentorAnchor.firstName || 'there',
+                        mentorName: `${t.firstName} ${t.lastName}`,
+                    });
+                }
+                const mentorTargetEmail = (t as { email?: string }).email;
+                if (mentorTargetEmail) {
+                    void this.mailer.sendMentorMenteeRemovedEmail({
+                        to: mentorTargetEmail,
+                        mentorFirstName: (t as { firstName?: string }).firstName || 'there',
+                        menteeName: mentorName,
+                    });
+                }
+            }
+        }
 
         return this.userModel.findById(userId).populate('assignedId');
     }
@@ -627,6 +786,9 @@ export class UsersService {
             throw new BadRequestException('Invitation has expired');
         }
 
+        const invitedById = user.fieldMentorInvitation.invitedBy;
+        const activatedName = `${user.firstName} ${user.lastName}`;
+
         // Remove all assigned users since user is changing to field mentor
         const assignedIds = user.assignedId || [];
 
@@ -653,6 +815,27 @@ export class UsersService {
         if (!updatedUser) {
             throw new NotFoundException('User not found');
         }
+
+        if (updatedUser.email) {
+            void this.mailer.sendFieldMentorRoleActivated({
+                to: updatedUser.email,
+                firstName: updatedUser.firstName || 'there',
+            });
+        }
+
+        if (invitedById) {
+            const director = await this.userModel.findById(invitedById).select('email firstName').lean();
+            const dEmail = (director as { email?: string } | null)?.email;
+            if (dEmail) {
+                void this.mailer.sendFieldMentorAcceptedDirector({
+                    to: dEmail,
+                    directorFirstName: (director as { firstName?: string }).firstName || 'there',
+                    newFieldMentorName: activatedName,
+                    profileUrl: this.mailer.profileUrl(updatedUser._id.toString()) || undefined,
+                });
+            }
+        }
+
         return toUserResponseDto(updatedUser);
     }
 
@@ -700,6 +883,24 @@ export class UsersService {
             firstName: user.firstName,
         });
 
+        const assigned = user.assignedId || [];
+        if (assigned.length && this.isMenteeSideRole(user.role)) {
+            const mentors = await this.userModel
+                .find({ _id: { $in: assigned } })
+                .select('email firstName role')
+                .lean()
+                .exec();
+            const menteeName = `${user.firstName} ${user.lastName}`;
+            for (const m of mentors as { email?: string; firstName?: string; role?: string }[]) {
+                if (!m.email || !this.isMentorHostRole(m.role)) continue;
+                void this.mailer.sendMentorMenteeCompletedProgram({
+                    to: m.email,
+                    mentorFirstName: m.firstName || 'there',
+                    menteeName,
+                });
+            }
+        }
+
         return toUserResponseDto(user);
     }
 
@@ -719,6 +920,18 @@ export class UsersService {
                 to: updatedUser.email,
                 firstName: updatedUser.firstName,
             });
+
+            const recipName = `${updatedUser.firstName} ${updatedUser.lastName}`;
+            const prof = this.mailer.profileUrl(updatedUser._id.toString()) || undefined;
+            for (const d of await this.listDirectorRecipients()) {
+                void this.mailer.sendDirectorCertificateIssued({
+                    to: d.email,
+                    directorFirstName: d.firstName,
+                    recipientName: recipName,
+                    profileUrl: prof,
+                });
+            }
+
             return toUserResponseDto(updatedUser);
         }
 

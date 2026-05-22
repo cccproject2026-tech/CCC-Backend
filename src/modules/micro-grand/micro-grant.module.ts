@@ -14,6 +14,8 @@ import { User, UserSchema } from '../users/schemas/user.schema';
 import { S3Module } from '../s3/s3.module';
 import { MulterModule } from '@nestjs/platform-express';
 import { HomeModule } from '../home/home.module';
+import { ConfigModule } from '@nestjs/config';
+import { MailerService } from 'src/common/utils/mail.util';
 
 @Module({
   imports: [
@@ -26,9 +28,11 @@ import { HomeModule } from '../home/home.module';
     MulterModule.register({
       storage: require('multer').memoryStorage(),
     }),
-    HomeModule
+    HomeModule,
+    ConfigModule,
+
   ],
   controllers: [MicroGrantController],
-  providers: [MicroGrantService],
+  providers: [MicroGrantService, MailerService],
 })
 export class MicroGrantModule { }

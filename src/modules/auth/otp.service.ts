@@ -20,7 +20,7 @@ export class OtpService {
 
         await this.otpModel.create({ email, otpHash, purpose, expiresAt, used: false });
 
-        await this.mailerService.sendOtpEmail(email, otp);
+        await this.mailerService.sendOtpEmail(email, otp, purpose);
         // return otp;
     }
 
