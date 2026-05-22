@@ -19,6 +19,11 @@ import { HomeService } from '../home/home.service';
 import { APPOINTMENT_STATUSES } from '../../common/constants/status.constants';
 import { ROLES } from '../../common/constants/roles.constants';
 import { USER_STATUSES } from '../../common/constants/status.constants';
+import {
+    formatMeetingDateForNotification,
+    mentoringRescheduleRequestNotification,
+    mentoringSessionRescheduledNotification,
+} from '../../common/utils/notification-copy.util';
 import type {
     AppointmentTranscriptSummary,
     DirectorPastorJourneyDto,
@@ -547,10 +552,19 @@ export class MentoringSessionsService {
             status: 'pending',
         });
 
+        const priorWhen =
+            appointment.meetingDate != null
+                ? formatMeetingDateForNotification(new Date(appointment.meetingDate))
+                : undefined;
+        const reqCopy = mentoringRescheduleRequestNotification({
+            sessionNumber,
+            priorWhenLabel: priorWhen,
+            reason,
+        });
         await this.homeService.addNotification({
             userId: String(appointment.mentorId),
-            name: 'MENTORING_RESCHEDULE_REQUEST',
-            details: `Your pastor requested a reschedule for mentoring session ${sessionNumber}.`,
+            name: reqCopy.name,
+            details: reqCopy.details,
             module: 'MENTORING',
         });
 
@@ -631,10 +645,17 @@ export class MentoringSessionsService {
             { $set: { status: 'applied' } },
         );
 
+        const whenLabel = updated!.meetingDate
+            ? formatMeetingDateForNotification(new Date(updated!.meetingDate))
+            : 'a new date and time shown in CCC';
+        const schCopy = mentoringSessionRescheduledNotification({
+            sessionNumber,
+            whenLabel,
+        });
         await this.homeService.addNotification({
             userId: pastorIdStr,
-            name: 'MENTORING_RESCHEDULED',
-            details: `Session ${sessionNumber || ''} has been rescheduled by your mentor.`,
+            name: schCopy.name,
+            details: schCopy.details,
             module: 'MENTORING',
         });
 

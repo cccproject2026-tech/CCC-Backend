@@ -26,6 +26,11 @@ import { ROLES } from '../../common/constants/roles.constants';
 import { nanoid } from 'nanoid';
 import { HomeService } from '../home/home.service';
 import { MailerService } from '../../common/utils/mail.util';
+import {
+    assignmentNotificationAsMentee,
+    assignmentNotificationAsMenteeToMentor,
+    assignmentNotificationGeneric,
+} from '../../common/utils/notification-copy.util';
 import { ConfigService } from '@nestjs/config';
 
 /** Mongoose assigns `_id` on each `uploadedDocuments` subdocument; it is not on the User class fields type. */
@@ -354,13 +359,6 @@ export class UsersService {
         const assignerIdStr = assigningUser._id.toString();
 
         for (const target of targetUsers) {
-            await this.notificationService.addNotification({
-                userId: target._id.toString(),
-                name: 'Assigned',
-                details: `You have been assigned to ${assigningUser.firstName} ${assigningUser.lastName}.`,
-                module: 'assignment',
-            });
-
             const targetRole = (target as { role?: string }).role ?? '';
             const assignerRole = assigningUser.role ?? '';
             const targetEmail = (target as { email?: string }).email;
@@ -368,6 +366,33 @@ export class UsersService {
             const menteeFirst = target.firstName;
             const mentorFirst = assigningUser.firstName;
             const targetName = `${target.firstName} ${target.lastName}`;
+
+            let targetNotif = assignmentNotificationGeneric(assignerName, this.connectionRoleLabel(assignerLabel));
+            let assignerNotif: { name: string; details: string } | null = null;
+
+            if (this.isMentorHostRole(assignerRole) && this.isMenteeSideRole(targetRole)) {
+                targetNotif = assignmentNotificationAsMentee(assignerName);
+                assignerNotif = assignmentNotificationAsMenteeToMentor(targetName);
+            } else if (this.isMenteeSideRole(assignerRole) && this.isMentorHostRole(targetRole)) {
+                targetNotif = assignmentNotificationAsMenteeToMentor(assignerName);
+                assignerNotif = assignmentNotificationAsMentee(targetName);
+            }
+
+            await this.notificationService.addNotification({
+                userId: target._id.toString(),
+                name: targetNotif.name,
+                details: targetNotif.details,
+                module: 'assignment',
+            });
+
+            if (assignerNotif) {
+                await this.notificationService.addNotification({
+                    userId: assignerIdStr,
+                    name: assignerNotif.name,
+                    details: assignerNotif.details,
+                    module: 'assignment',
+                });
+            }
 
             if (this.isMentorHostRole(assignerRole) && this.isMenteeSideRole(targetRole)) {
                 if (targetEmail) {
@@ -424,13 +449,6 @@ export class UsersService {
                 }
             }
         }
-
-        await this.notificationService.addNotification({
-            userId,
-            name: 'Assigned',
-            details: `You have been assigned to ${assigningUser.firstName} ${assigningUser.lastName}.`,
-            module: 'assignment',
-        });
 
         return this.userModel.findById(userId).populate('assignedId');
     }

@@ -24,6 +24,7 @@ import { UsersService } from '../users/users.service';
 import { ROLES } from '../../common/constants/roles.constants';
 import { HomeService } from '../home/home.service';
 import { MailerService } from 'src/common/utils/mail.util';
+import { interestDecisionNotification } from 'src/common/utils/notification-copy.util';
 
 @Injectable()
 export class InterestService {
@@ -339,10 +340,11 @@ export class InterestService {
       .then(() => console.log(`Updated interest form status for user ${userId}`))
       .catch((error) => console.warn(`Failed to update interest status for user ${userId}:`, error.message));
 
+    const statusMsg = interestDecisionNotification(status);
     this.notificationService.addNotification({
       userId: userId,
-      name: "STATUS_UPDATED",
-      details: `Your application status was changed to: ${status}`,
+      name: statusMsg.name,
+      details: statusMsg.details,
       module: "user-status",
     })
       .then(() => console.log(`Notification sent to user ${userId}`))

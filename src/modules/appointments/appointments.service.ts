@@ -38,8 +38,7 @@ import {
     subtractIntervalFromBusyIntervals,
     intervalOverlapsBusy,
 } from '../google-calendar/google-calendar.service';
-
-@Injectable()
+import { formatMeetingDateForNotification } from '../../common/utils/notification-copy.util';
 export class AppointmentsService {
     private readonly logger = new Logger(AppointmentsService.name);
 
@@ -823,28 +822,28 @@ export class AppointmentsService {
         const result = toAppointmentResponseDto(populated as AppointmentDocument);
 
         try {
-            const meetingIso = result.meetingDate.toISOString();
-            const zoomInfo = meetingLink ? ` Zoom link: ${meetingLink}` : '';
+            const whenLabel = formatMeetingDateForNotification(result.meetingDate);
+            const zoomInfo = meetingLink ? ` Join Zoom: ${meetingLink}` : '';
 
             await this.notificationService.addNotification({
                 userId: dto.userId,
-                name: 'APPOINTMENT_SCHEDULED',
-                details: `Your appointment with ${mentorName} is scheduled at ${meetingIso}.${zoomInfo}`,
-                module: 'APPOINTMENT'
+                name: 'Appointment scheduled',
+                details: `Your mentorship session with ${mentorName} is on ${whenLabel}.${zoomInfo}`,
+                module: 'APPOINTMENT',
             });
 
             await this.notificationService.addNotification({
                 userId: dto.mentorId,
-                name: 'NEW_APPOINTMENT',
-                details: `${userName} has booked an appointment with you at ${meetingIso}.${zoomInfo}`,
-                module: 'APPOINTMENT'
+                name: 'New session booked',
+                details: `${userName} scheduled a mentorship session with you for ${whenLabel}.${zoomInfo}`,
+                module: 'APPOINTMENT',
             });
 
             await this.notificationService.addNotification({
                 role: ROLES.DIRECTOR,
-                name: 'APPOINTMENT_BOOKED',
-                details: `${userName} booked an appointment with ${mentorName} at ${meetingIso}.`,
-                module: 'APPOINTMENT'
+                name: 'Appointment booked',
+                details: `${userName} booked a session with ${mentorName} (${whenLabel}).`,
+                module: 'APPOINTMENT',
             });
 
             // Send email notifications to pastor (user) and mentor if Zoom link exists
@@ -1062,26 +1061,26 @@ export class AppointmentsService {
             if (userDoc) userName = `${userDoc.firstName ?? ''} ${userDoc.lastName ?? ''}`.trim();
             if (mentorDoc) mentorName = `${mentorDoc.firstName ?? ''} ${mentorDoc.lastName ?? ''}`.trim();
 
-            const newIso = populated.meetingDate.toISOString();
+            const whenLabel = formatMeetingDateForNotification(populated.meetingDate);
 
             await this.notificationService.addNotification({
                 userId: populated.userId._id.toString(),
-                name: 'APPOINTMENT_RESCHEDULED',
-                details: `Your appointment with ${mentorName} has been rescheduled to ${newIso}.`,
+                name: 'Appointment rescheduled',
+                details: `Your session with ${mentorName} is now ${whenLabel}. Open CCC for your updated Zoom link and calendar.`,
                 module: 'APPOINTMENT',
             });
 
             await this.notificationService.addNotification({
                 userId: populated.mentorId._id.toString(),
-                name: 'APPOINTMENT_RESCHEDULED',
-                details: `${userName} rescheduled their appointment to ${newIso}.`,
+                name: 'Appointment rescheduled',
+                details: `${userName} moved your shared session to ${whenLabel}. Check CCC for the latest meeting link.`,
                 module: 'APPOINTMENT',
             });
 
             await this.notificationService.addNotification({
                 role: ROLES.DIRECTOR,
-                name: 'APPOINTMENT_RESCHEDULED',
-                details: `${userName} rescheduled an appointment with ${mentorName} to ${newIso}.`,
+                name: 'Appointment rescheduled',
+                details: `${userName} rescheduled their session with ${mentorName} to ${whenLabel}.`,
                 module: 'APPOINTMENT',
             });
 
@@ -1931,27 +1930,30 @@ export class AppointmentsService {
                 mentorName = `${mentorDoc.firstName ?? ''} ${mentorDoc.lastName ?? ''}`.trim();
             }
 
-            const dateIso = populated.meetingDate.toISOString();
-            const reasonText = dto.reason ? `Reason: ${dto.reason}` : 'No reason provided';
+            const whenLabel = formatMeetingDateForNotification(populated.meetingDate);
+            const reasonText =
+                dto.reason ?
+                    `Director note: ${dto.reason}`
+                :   '';
 
             await this.notificationService.addNotification({
                 userId: populated.userId._id.toString(),
-                name: 'APPOINTMENT_CANCELED',
-                details: `Your appointment with ${mentorName} on ${dateIso} was canceled. ${reasonText}`,
+                name: 'Appointment canceled',
+                details: `The session with ${mentorName} that was planned for ${whenLabel} has been canceled. ${reasonText}`.trim(),
                 module: 'APPOINTMENT',
             });
 
             await this.notificationService.addNotification({
                 userId: populated.mentorId._id.toString(),
-                name: 'APPOINTMENT_CANCELED',
-                details: `${userName} canceled their appointment scheduled at ${dateIso}. ${reasonText}`,
+                name: 'Appointment canceled',
+                details: `${userName}'s mentorship session (${whenLabel}) was canceled. ${reasonText}`.trim(),
                 module: 'APPOINTMENT',
             });
 
             await this.notificationService.addNotification({
                 role: ROLES.DIRECTOR,
-                name: 'APPOINTMENT_CANCELED',
-                details: `${userName}'s appointment with ${mentorName} on ${dateIso} was canceled. ${reasonText}`,
+                name: 'Appointment canceled',
+                details: `Canceled: ${userName} with ${mentorName} (${whenLabel}). ${reasonText}`.trim(),
                 module: 'APPOINTMENT',
             });
 
