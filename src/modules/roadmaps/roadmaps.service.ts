@@ -59,7 +59,9 @@ export class RoadMapsService {
      * Director library listing: ordered roadmaps first by displayOrder ascending;
      * items without displayOrder sort after, by createdAt ascending.
      */
-    private sortRoadmapsByLibraryOrder<T extends { displayOrder?: number; createdAt?: Date }>(items: T[]): T[] {
+    private sortRoadmapsByLibraryOrder<
+        T extends { _id: Types.ObjectId; displayOrder?: number; createdAt?: Date },
+    >(items: T[]): T[] {
         return [...items].sort((a, b) => {
             const ao = a.displayOrder;
             const bo = b.displayOrder;
@@ -151,7 +153,7 @@ export class RoadMapsService {
         }
 
         const roadmaps = await this.roadMapModel.find(query).lean().exec();
-        const sorted = this.sortRoadmapsByLibraryOrder(roadmaps as { displayOrder?: number; createdAt?: Date }[]);
+        const sorted = this.sortRoadmapsByLibraryOrder(roadmaps);
         return sorted.map(rm => toRoadMapResponseDto(rm as any));
     }
 
@@ -1366,7 +1368,7 @@ export class RoadMapsService {
             .find({ _id: { $in: roadmapIds } })
             .lean();
 
-        const sorted = this.sortRoadmapsByLibraryOrder(roadmaps as { displayOrder?: number; createdAt?: Date }[]);
+        const sorted = this.sortRoadmapsByLibraryOrder(roadmaps);
 
         return sorted.map(rm => {
             const progressData = progress.roadmaps.find(
