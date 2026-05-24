@@ -15,7 +15,7 @@ import {
 import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
 import { RoadMapsService } from './roadmaps.service';
 import { BaseResponse } from 'src/shared/interfaces/base-response.interface';
-import { RoadMapResponseDto, CreateRoadMapDto, UpdateRoadMapDto, UpdateNestedRoadMapItemDto, NestedRoadMapItemDto } from './dto/roadmap.dto';
+import { RoadMapResponseDto, CreateRoadMapDto, UpdateRoadMapDto, UpdateNestedRoadMapItemDto, NestedRoadMapItemDto, ReorderRoadmapsDto } from './dto/roadmap.dto';
 import { AddCommentDto, CommentsThreadResponseDto } from './dto/comments.dto';
 import {
     CreateQueryDto,
@@ -60,6 +60,18 @@ export class RoadMapsController {
             success: true,
             message: 'RoadMaps fetched successfully',
             data: roadmaps,
+        };
+    }
+
+    @Patch('reorder')
+    async reorderRoadmaps(
+        @Body() dto: ReorderRoadmapsDto,
+    ): Promise<BaseResponse<{ updatedCount: number }>> {
+        const data = await this.roadMapsService.reorderRoadmaps(dto.orderedRoadmapIds);
+        return {
+            success: true,
+            message: 'Roadmap library order saved successfully.',
+            data,
         };
     }
 

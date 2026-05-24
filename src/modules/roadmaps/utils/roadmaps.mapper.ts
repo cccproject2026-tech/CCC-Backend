@@ -39,6 +39,7 @@ export const toRoadMapResponseDto = (doc: RoadMapDocument | any): RoadMapRespons
         totalSteps: doc.totalSteps,
         extras: doc.extras || [],
         roadmaps: (doc.roadmaps || []).map(mapNestedRoadMapItem),
+        displayOrder: typeof doc.displayOrder === 'number' ? doc.displayOrder : undefined,
         createdAt: doc.createdAt,
         updatedAt: doc.updatedAt,
     };

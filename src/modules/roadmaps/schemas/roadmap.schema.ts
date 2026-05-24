@@ -297,6 +297,10 @@ export class RoadMap {
 
     @Prop({ type: [NestedRoadMapItemSchema], default: [] })
     roadmaps: Types.Array<NestedRoadMapItem>;
+
+    /** Director library sort order (1-based). Omitted on legacy documents until reordered. */
+    @Prop({ type: Number, required: false })
+    displayOrder?: number;
 }
 
 export const RoadMapSchema = SchemaFactory.createForClass(RoadMap);
@@ -308,6 +312,7 @@ export type RoadMapDocument = Document<unknown, {}, RoadMap> & RoadMap & {
 RoadMapSchema.index({ name: 'text', description: 'text', roadMapDetails: 'text' });
 RoadMapSchema.index({ status: 1, createdAt: -1 });
 RoadMapSchema.index({ type: 1, status: 1 });
+RoadMapSchema.index({ displayOrder: 1, createdAt: 1 });
 
 RoadMapSchema.pre('save', function (next) {
     const doc = this as RoadMapDocument;

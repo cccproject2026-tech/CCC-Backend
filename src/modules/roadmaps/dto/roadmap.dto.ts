@@ -258,6 +258,13 @@ export class NestedRoadMapItemDto {
     extras?: ExtraItemDto[];
 }
 
+export class ReorderRoadmapsDto {
+    @IsArray()
+    @ArrayMinSize(1)
+    @IsString({ each: true })
+    orderedRoadmapIds!: string[];
+}
+
 export class CreateRoadMapDto {
     @IsString()
     type: string;
@@ -442,6 +449,8 @@ export class RoadMapResponseDto {
     assesmentId?: string;
     totalSteps?: number;
     roadmaps: NestedRoadMapItemDto[];
+    /** Library order when set via PATCH /roadmaps/reorder */
+    displayOrder?: number;
     createdAt?: Date;
     updatedAt?: Date;
 }
