@@ -11,6 +11,7 @@ import { S3Module } from '../s3/s3.module';
 import { HomeModule } from '../home/home.module';
 import { User, UserSchema } from '../users/schemas/user.schema';
 import { Availability, AvailabilitySchema } from '../appointments/schemas/availability.schema';
+import { Appointment, AppointmentSchema } from '../appointments/schemas/appointment.schema';
 import { AppointmentsModule } from '../appointments/appointments.module';
 import { MailerService } from 'src/common/utils/mail.util';
 import { ConfigModule } from '@nestjs/config';
@@ -25,7 +26,8 @@ import { ConfigModule } from '@nestjs/config';
             { name: Extras.name, schema: ExtrasSchema },
             { name: Progress.name, schema: ProgressSchema },
             { name: User.name, schema: UserSchema },
-            { name: Availability.name, schema: AvailabilitySchema }
+            { name: Availability.name, schema: AvailabilitySchema },
+            { name: Appointment.name, schema: AppointmentSchema },
         ]),
         S3Module,
         HomeModule,
