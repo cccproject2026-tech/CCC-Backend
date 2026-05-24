@@ -55,6 +55,25 @@ export class RoadMapsService {
         return `${text.slice(0, max).trimEnd()}…`;
     }
 
+    /**
+     * Director library listing: ordered roadmaps first by displayOrder ascending;
+     * items without displayOrder sort after, by createdAt ascending.
+     */
+    private sortRoadmapsByLibraryOrder<T extends { displayOrder?: number; createdAt?: Date }>(items: T[]): T[] {
+        return [...items].sort((a, b) => {
+            const ao = a.displayOrder;
+            const bo = b.displayOrder;
+            const aHas = typeof ao === 'number' && Number.isFinite(ao);
+            const bHas = typeof bo === 'number' && Number.isFinite(bo);
+            if (aHas && bHas && ao !== bo) return ao - bo;
+            if (aHas && !bHas) return -1;
+            if (!aHas && bHas) return 1;
+            const ac = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+            const bc = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+            return ac - bc;
+        });
+    }
+
     private isPastoralLearnerRole(role?: string): boolean {
         const r = (role ?? '').trim().toLowerCase();
         return r === ROLES.PASTOR || r === ROLES.LAY_LEADER || r === ROLES.SEMINARIAN;
@@ -132,7 +151,63 @@ export class RoadMapsService {
         }
 
         const roadmaps = await this.roadMapModel.find(query).lean().exec();
-        return roadmaps.map(rm => toRoadMapResponseDto(rm as any));
+        const sorted = this.sortRoadmapsByLibraryOrder(roadmaps as { displayOrder?: number; createdAt?: Date }[]);
+        return sorted.map(rm => toRoadMapResponseDto(rm as any));
+    }
+
+    /**
+     * Sets displayOrder from 1-based index in orderedRoadmapIds (array position).
+     * Invalid Mongo ids and ids that do not exist are skipped (no error).
+     * Duplicate ids: first occurrence wins.
+     */
+    async reorderRoadmaps(orderedRoadmapIds: string[]): Promise<{ updatedCount: number }> {
+        if (!Array.isArray(orderedRoadmapIds) || orderedRoadmapIds.length === 0) {
+            throw new BadRequestException('orderedRoadmapIds must contain at least one id.');
+        }
+
+        const candidates = [...new Set(orderedRoadmapIds.map((id) => String(id).trim()).filter(Boolean))]
+            .filter((id) => Types.ObjectId.isValid(id));
+
+        if (candidates.length === 0) {
+            return { updatedCount: 0 };
+        }
+
+        const objectIds = candidates.map((id) => new Types.ObjectId(id));
+        const existingDocs = await this.roadMapModel
+            .find({ _id: { $in: objectIds } })
+            .select('_id')
+            .lean()
+            .exec();
+        const existingSet = new Set(existingDocs.map((d) => d._id.toString()));
+
+        const seen = new Set<string>();
+        const bulkOps: {
+            updateOne: {
+                filter: { _id: Types.ObjectId };
+                update: { $set: { displayOrder: number } };
+            };
+        }[] = [];
+
+        for (let i = 0; i < orderedRoadmapIds.length; i++) {
+            const raw = orderedRoadmapIds[i];
+            const s = typeof raw === 'string' ? raw.trim() : String(raw ?? '').trim();
+            if (!s || !Types.ObjectId.isValid(s)) continue;
+            if (seen.has(s)) continue;
+            seen.add(s);
+            if (!existingSet.has(s)) continue;
+            bulkOps.push({
+                updateOne: {
+                    filter: { _id: new Types.ObjectId(s) },
+                    update: { $set: { displayOrder: i + 1 } },
+                },
+            });
+        }
+
+        if (bulkOps.length > 0) {
+            await this.roadMapModel.bulkWrite(bulkOps);
+        }
+
+        return { updatedCount: bulkOps.length };
     }
 
     async findById(id: string): Promise<RoadMapResponseDto> {
@@ -1291,7 +1366,9 @@ export class RoadMapsService {
             .find({ _id: { $in: roadmapIds } })
             .lean();
 
-        return roadmaps.map(rm => {
+        const sorted = this.sortRoadmapsByLibraryOrder(roadmaps as { displayOrder?: number; createdAt?: Date }[]);
+
+        return sorted.map(rm => {
             const progressData = progress.roadmaps.find(
                 p => p.roadMapId.toString() === rm._id.toString(),
             );

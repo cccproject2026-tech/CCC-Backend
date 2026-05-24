@@ -67,12 +67,18 @@ export class MailerService {
         const y = new Date().getFullYear();
         return `<!DOCTYPE html>
 <html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta name="supported-color-schemes" content="light">
+<title>${escapeEmailHtml(eyebrowText)} · CCC</title>
+</head>
 <body style="margin:0;padding:0;background-color:#f1f5f9;">
 <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background-color:#f1f5f9;">
   <tr>
-    <td align="center" style="padding:28px 16px;font-family:${this.emailFontStack};">
-      <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:600px;background:#ffffff;border-radius:12px;border:1px solid ${this.emailBorder};overflow:hidden;">
+    <td align="center" style="padding:24px 14px 32px;font-family:${this.emailFontStack};">
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:600px;background:#ffffff;border-radius:14px;border:1px solid ${this.emailBorder};overflow:hidden;box-shadow:0 1px 3px rgba(15,23,42,0.06);">
         <tr>
           <td style="background:linear-gradient(135deg,#1e3a5f 0%,#1e40af 100%);padding:28px 32px;">
             <p style="margin:0;font-size:11px;font-weight:600;letter-spacing:0.12em;color:#bfdbfe;text-transform:uppercase;">The Center for Community Change</p>
@@ -83,22 +89,22 @@ export class MailerService {
           </td>
         </tr>
         <tr>
-          <td style="padding:32px 32px 24px;color:${this.emailInk};font-size:15px;line-height:1.6;">
+          <td style="padding:28px 24px 20px;color:${this.emailInk};font-size:15px;line-height:1.65;">
             ${innerBodyHtml}
           </td>
         </tr>
         <tr>
           <td style="padding:0 32px 28px;font-size:12px;line-height:1.55;color:${this.emailMuted};border-top:1px solid #f1f5f9;">
             <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-              <tr><td style="padding-top:20px;">
-                <p style="margin:0;">You are receiving this because of activity in your CCC account.</p>
-                <p style="margin:12px 0 0;font-size:11px;color:#94a3b8;">CCC · © ${y} · Community mentorship &amp; learning</p>
+              <tr>              <td style="padding-top:20px;">
+                <p style="margin:0;">You’re receiving this email because something changed in your CCC account or someone took an action that involves you.</p>
+                <p style="margin:12px 0 0;font-size:11px;color:#94a3b8;">The Center for Community Change · © ${y}</p>
               </td></tr>
             </table>
           </td>
         </tr>
       </table>
-      <p style="margin:16px auto 0;max-width:600px;font-size:11px;color:#94a3b8;line-height:1.5;text-align:center;">If buttons do not work, copy the plain link shown below each button.</p>
+      <p style="margin:16px auto 0;max-width:600px;font-size:12px;color:#64748b;line-height:1.55;text-align:center;">Button didn’t open? Tap the blue link underneath — it’s the same destination.</p>
     </td>
   </tr>
 </table>
@@ -115,7 +121,21 @@ export class MailerService {
     }
 
     private proseParagraph(html: string, marginBottom = '16px'): string {
-        return `<p style="margin:0 0 ${marginBottom};font-size:15px;line-height:1.65;color:#334155;">${html}</p>`;
+        return `<p style="margin:0 0 ${marginBottom};font-size:15px;line-height:1.7;color:#334155;">${html}</p>`;
+    }
+
+    /** Short numbered list for instructions (email-safe table rows). */
+    private numberedStepsHtml(steps: string[]): string {
+        if (!steps.length) return '';
+        const rows = steps.map(
+            (s, idx) =>
+                `<tr>
+  <td style="vertical-align:top;padding:0 14px 12px 0;width:28px;"><span style="display:inline-block;min-width:24px;height:24px;line-height:24px;border-radius:999px;background:${this.emailAccentBlue};color:#ffffff;font-size:12px;font-weight:700;text-align:center;">${idx + 1}</span></td>
+  <td style="vertical-align:top;padding:0 0 12px;font-size:14px;line-height:1.65;color:#334155;">${s}</td>
+</tr>`,
+        );
+        return `
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:16px 0 8px;"><tbody>${rows.join('')}</tbody></table>`;
     }
 
     private primaryCta(href: string, label: string): string {
@@ -124,7 +144,7 @@ export class MailerService {
 <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:22px 0 8px;">
   <tr>
     <td style="border-radius:8px;background:${this.emailAccentBlue};">
-      <a href="${h}" style="display:inline-block;padding:14px 28px;color:#ffffff !important;text-decoration:none;font-size:15px;font-weight:600;line-height:1.2;font-family:${this.emailFontStack};">${escapeEmailHtml(label)}</a>
+      <a href="${h}" style="display:inline-block;padding:15px 32px;color:#ffffff !important;text-decoration:none;font-size:15px;font-weight:600;line-height:1.25;font-family:${this.emailFontStack};">${escapeEmailHtml(label)}</a>
     </td>
   </tr>
 </table>
@@ -149,19 +169,19 @@ export class MailerService {
         if (web) {
             const w = escapeEmailAttr(web);
             rows.push(
-                `<tr><td style="padding:8px 0;border-bottom:1px solid ${this.emailBorder};"><a href="${w}" style="color:${this.emailAccentBlue};font-size:14px;font-weight:600;text-decoration:none;">Web app »</a><span style="display:block;margin-top:2px;font-size:12px;color:${this.emailMuted};word-break:break-all;">${escapeEmailHtml(web)}</span></td></tr>`,
+                `<tr><td style="padding:10px 0;border-bottom:1px solid ${this.emailBorder};"><a href="${w}" style="color:${this.emailAccentBlue};font-size:15px;font-weight:600;text-decoration:none;">CCC in your browser →</a><span style="display:block;margin-top:4px;font-size:12px;color:${this.emailMuted};line-height:1.45;">Best on laptop or tablet. Link also works on your phone.</span><span style="display:block;margin-top:6px;font-size:11px;color:#94a3b8;word-break:break-all;line-height:1.4;">${escapeEmailHtml(web)}</span></td></tr>`,
             );
         }
         if (andr) {
             const a = escapeEmailAttr(andr);
             rows.push(
-                `<tr><td style="padding:8px 0;border-bottom:1px solid ${this.emailBorder};"><a href="${a}" style="color:${this.emailAccentBlue};font-size:14px;font-weight:600;text-decoration:none;">Google Play »</a></td></tr>`,
+                `<tr><td style="padding:10px 0;border-bottom:1px solid ${this.emailBorder};"><a href="${a}" style="color:${this.emailAccentBlue};font-size:15px;font-weight:600;text-decoration:none;">Android app →</a><span style="display:block;margin-top:4px;font-size:12px;color:${this.emailMuted};line-height:1.45;">Get CCC from Google Play.</span></td></tr>`,
             );
         }
         if (ios) {
             const i = escapeEmailAttr(ios);
             rows.push(
-                `<tr><td style="padding:8px 0;"><a href="${i}" style="color:${this.emailAccentBlue};font-size:14px;font-weight:600;text-decoration:none;">App Store »</a></td></tr>`,
+                `<tr><td style="padding:10px 0;"><a href="${i}" style="color:${this.emailAccentBlue};font-size:15px;font-weight:600;text-decoration:none;">iPhone / iPad app →</a><span style="display:block;margin-top:4px;font-size:12px;color:${this.emailMuted};line-height:1.45;">Get CCC from the App Store.</span></td></tr>`,
             );
         }
         if (!rows.length) return '';
@@ -169,7 +189,8 @@ export class MailerService {
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:28px 0 0;background:#f8fafc;border-radius:10px;border:1px solid ${this.emailBorder};">
   <tr>
     <td style="padding:16px 18px;">
-      <p style="margin:0 0 10px;font-size:11px;font-weight:700;letter-spacing:0.06em;color:#475569;text-transform:uppercase;">Continue in CCC</p>
+      <p style="margin:0 0 4px;font-size:15px;font-weight:700;color:${this.emailInk};line-height:1.3;">Open CCC on any device</p>
+      <p style="margin:0 0 14px;font-size:13px;line-height:1.5;color:${this.emailMuted};">Pick the option you use most — your account stays the same.</p>
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">${rows.join('')}</table>
     </td>
   </tr>
@@ -187,18 +208,31 @@ export class MailerService {
         const inner = isReset
             ? `
 ${this.greetingParagraph('there')}
-${this.proseParagraph('We received a request to reset your CCC account password.', '10px')}
-${this.proseParagraph('Please use the verification code below. It is valid for <b>10 minutes</b>. Please do not share this code with anyone.', '20px')}
-<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:8px 0 20px;"><tr><td style="padding:18px 24px;background:#f1f5f9;border-radius:10px;border:1px dashed #cbd5e1;text-align:center;">
-  <p style="margin:0;font-size:12px;color:${this.emailMuted};letter-spacing:0.06em;text-transform:uppercase;">Reset code</p>
-  <p style="margin:8px 0 0;font-size:28px;font-weight:700;letter-spacing:0.25em;color:${this.emailInk};font-family:ui-monospace,Consolas,monospace;">${safeOtp}</p>
+${this.proseParagraph('We got a request to <strong>reset the password</strong> for your CCC account. If that was you, use the code below in the app or website — no need to reply to this email.', '14px')}
+${this.numberedStepsHtml([
+            'Go back to CCC where you asked for the reset.',
+            'Enter the verification code shown below.',
+            'Create a new password when you’re prompted.',
+        ])}
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:10px 0 18px;"><tr><td style="padding:20px 22px;background:#f8fafc;border-radius:12px;border:2px solid #e2e8f0;text-align:center;">
+  <p style="margin:0;font-size:11px;color:${this.emailMuted};letter-spacing:0.08em;text-transform:uppercase;font-weight:700;">Your reset code</p>
+  <p style="margin:10px 0 0;font-size:32px;font-weight:800;letter-spacing:0.22em;color:${this.emailInk};font-family:ui-monospace,Consolas,monospace;line-height:1.2;">${safeOtp}</p>
+  <p style="margin:12px 0 0;font-size:12px;color:${this.emailMuted};line-height:1.45;">Valid for <strong>10 minutes</strong>. CCC staff will never ask you for this code.</p>
 </td></tr></table>
-${this.proseParagraph('If you did not request a password reset, you can safely ignore this email.', '0')}`
+${this.proseParagraph('<strong>Not you?</strong> You can ignore this message — your password will stay the same.', '8px')}
+${this.proseParagraph('If you’re locked out repeatedly, contact your program coordinator.', '0')}`
             : `
-${this.proseParagraph('Use this one-time code to complete your sign-in. It expires in <b>10 minutes</b>.', '20px')}
-<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:8px 0 20px;"><tr><td style="padding:18px 24px;background:#f1f5f9;border-radius:10px;border:1px dashed #cbd5e1;text-align:center;">
-  <p style="margin:0;font-size:12px;color:${this.emailMuted};letter-spacing:0.06em;text-transform:uppercase;">Your code</p>
-  <p style="margin:8px 0 0;font-size:28px;font-weight:700;letter-spacing:0.25em;color:${this.emailInk};font-family:ui-monospace,Consolas,monospace;">${safeOtp}</p>
+${this.greetingParagraph('there')}
+${this.proseParagraph('Use this short code to finish signing in. It expires in <strong>10 minutes</strong>.', '14px')}
+${this.numberedStepsHtml([
+            'Return to the CCC sign-in screen (app or browser).',
+            'Type the code below where CCC asks for your verification code.',
+            'If you didn’t try to sign in, close the screen and ignore this email.',
+        ])}
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:10px 0 18px;"><tr><td style="padding:20px 22px;background:#f8fafc;border-radius:12px;border:2px solid #e2e8f0;text-align:center;">
+  <p style="margin:0;font-size:11px;color:${this.emailMuted};letter-spacing:0.08em;text-transform:uppercase;font-weight:700;">Sign-in code</p>
+  <p style="margin:10px 0 0;font-size:32px;font-weight:800;letter-spacing:0.22em;color:${this.emailInk};font-family:ui-monospace,Consolas,monospace;line-height:1.2;">${safeOtp}</p>
+  <p style="margin:12px 0 0;font-size:12px;color:${this.emailMuted};line-height:1.45;">Tip: on mobile, double-tap the code to select it for easy pasting.</p>
 </td></tr></table>
 ${this.proseParagraph('If you didn’t request this, you can safely ignore this email.', '0')}`;
         const html = this.layoutEmail(isReset ? 'Password reset' : 'Sign-in verification', '#fde68a', inner);
