@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { RoadMap, RoadMapDocument } from './schemas/roadmap.schema';
@@ -18,11 +18,13 @@ import { Progress, ProgressDocument } from '../progress/schemas/progress.schema'
 import { toObjectId } from 'src/common/pipes/to-object-id.pipe';
 import { User, UserDocument } from '../users/schemas/user.schema';
 import { Availability, AvailabilityDocument } from '../appointments/schemas/availability.schema';
+import { Appointment, AppointmentDocument } from '../appointments/schemas/appointment.schema';
 import { buildMeetingDate, normalizeRoadmapName, SESSION_FLOW, SESSION_NOTES } from './utils/helper';
 import { AppointmentsService } from '../appointments/appointments.service';
 import { S3Service } from '../s3/s3.service';
 import { MailerService } from '../../common/utils/mail.util';
 import { ROLES } from '../../common/constants/roles.constants';
+import { APPOINTMENT_PLATFORMS, APPOINTMENT_STATUSES } from '../../common/constants/status.constants';
 
 function resolveDefaultSteps(totalSteps?: number, extras?: any[]): number {
     if (typeof totalSteps === 'number' && totalSteps > 0) {
@@ -33,8 +35,12 @@ function resolveDefaultSteps(totalSteps?: number, extras?: any[]): number {
     return extrasCount > 0 ? extrasCount : 1;
 }
 
+const MENTORING_JOURNEY_SESSION_MAX = SESSION_NOTES.length;
+
 @Injectable()
 export class RoadMapsService {
+    private readonly logger = new Logger(RoadMapsService.name);
+
     constructor(
         @InjectModel(RoadMap.name) private roadMapModel: Model<RoadMapDocument>,
         @InjectModel(Comments.name) private commentsModel: Model<CommentsDocument>,
@@ -43,6 +49,7 @@ export class RoadMapsService {
         @InjectModel(Progress.name) private progressModel: Model<ProgressDocument>,
         @InjectModel(User.name) private userModel: Model<UserDocument>,
         @InjectModel(Availability.name) private availabilityModel: Model<AvailabilityDocument>,
+        @InjectModel(Appointment.name) private appointmentModel: Model<AppointmentDocument>,
         private readonly s3Service: S3Service,
         private readonly appointmentService: AppointmentsService,
         private readonly mailer: MailerService,
@@ -930,21 +937,10 @@ export class RoadMapsService {
             throw new NotFoundException("Roadmap not found");
         }
 
-        const isSingleType =
-            roadmap.type?.trim().toLowerCase() === "single";
-
-        if (isSingleType) {
-
-            const existingSession = await this.extrasModel.findOne({
-                userId: userObjectId,
-                "extras.type": "APPOINTMENT",
-                "extras.data.sessionNumber": 1
-            });
-
-            if (!existingSession) {
-                await this.getMentorFromPastor(userObjectId.toString());
-            }
-        }
+        await this.maybeSyncJumpstartSessionOneAfterRoadmapCompletion(
+            userObjectId,
+            roadMapObjectId as Types.ObjectId,
+        );
 
         return toExtrasResponseDto(savedExtras as any);
     }
@@ -1062,6 +1058,11 @@ export class RoadMapsService {
                 }
             );
         }
+
+        await this.maybeSyncJumpstartSessionOneAfterRoadmapCompletion(
+            userObjectId,
+            roadMapObjectId as Types.ObjectId,
+        );
 
         return toExtrasResponseDto(updatedExtras as any);
     }
@@ -1353,6 +1354,362 @@ export class RoadMapsService {
         return nestedItem;
     }
 
+    private async resolvePhaseTargetForMentoringSession(sessionNumber: number): Promise<{
+        roadMapObjectId: Types.ObjectId;
+        nestedRoadMapItemObjectId: Types.ObjectId | null;
+    }> {
+        if (sessionNumber < 1 || sessionNumber > MENTORING_JOURNEY_SESSION_MAX) {
+            throw new BadRequestException(`Invalid mentoring session ${sessionNumber}.`);
+        }
+
+        let cumulative = 0;
+        let targetPhase: string | null = null;
+
+        for (const phase of SESSION_FLOW) {
+            cumulative += phase.totalSessions;
+            if (sessionNumber <= cumulative) {
+                targetPhase = phase.phaseName;
+                break;
+            }
+        }
+
+        if (!targetPhase) {
+            throw new BadRequestException('No phase mapped for mentoring session.');
+        }
+
+        const normalizedPhase = normalizeRoadmapName(targetPhase);
+
+        const phaseRoadmaps = await this.roadMapModel.find({ type: 'phase' }).lean().exec();
+
+        const roadmap = phaseRoadmaps.find(
+            (rm) => normalizeRoadmapName(rm.name) === normalizedPhase,
+        );
+
+        if (!roadmap) {
+            throw new NotFoundException(
+                `Target phase roadmap "${targetPhase}" not found. Candidates: ${phaseRoadmaps.map((r) => r.name).join(', ')}.`,
+            );
+        }
+
+        const nestedRaw = roadmap.roadmaps?.[0]?._id;
+        return {
+            roadMapObjectId: roadmap._id as Types.ObjectId,
+            nestedRoadMapItemObjectId: nestedRaw ? new Types.ObjectId(String(nestedRaw)) : null,
+        };
+    }
+
+    private buildExtrasAnchoredQuery(params: {
+        userId: Types.ObjectId;
+        roadMapObjectId: Types.ObjectId;
+        nestedRoadMapItemObjectId: Types.ObjectId | null;
+    }): Record<string, unknown> {
+        const { userId, roadMapObjectId, nestedRoadMapItemObjectId } = params;
+
+        const query: Record<string, unknown> = {
+            userId,
+            roadMapId: roadMapObjectId,
+        };
+
+        if (nestedRoadMapItemObjectId) {
+            query.nestedRoadMapItemId = nestedRoadMapItemObjectId;
+        } else {
+            query.$or = [
+                { nestedRoadMapItemId: null },
+                { nestedRoadMapItemId: { $exists: false } },
+            ];
+        }
+
+        return query;
+    }
+
+    private locatePastorMentoringSessionOneSync(
+        extrasDocs: ExtrasDocument[],
+        sessionNum: number,
+    ):
+        | {
+              doc: ExtrasDocument;
+              idx: number;
+              appointmentIdRaw: unknown;
+              dataRef: Record<string, unknown>;
+          }
+        | undefined {
+        for (const doc of extrasDocs) {
+            const list = doc.extras || [];
+            for (let i = 0; i < list.length; i += 1) {
+                const e = list[i] as { type?: string; data?: Record<string, unknown> };
+                const sn = e?.data?.sessionNumber;
+                if (e?.type !== 'APPOINTMENT' || typeof sn !== 'number' || sn !== sessionNum) {
+                    continue;
+                }
+                const dataRef =
+                    e.data && typeof e.data === 'object' ? e.data : ({} as Record<string, unknown>);
+                return {
+                    doc,
+                    idx: i,
+                    appointmentIdRaw: e.data?.appointmentId,
+                    dataRef,
+                };
+            }
+        }
+        return undefined;
+    }
+
+    /**
+     * Syncs mentoring **Session 1** to Jumpstart/onboarding (“single roadmap”) completion:
+     * `scheduledDate`, linked appointment `meetingDate`, and status SCHEDULED vs MISSED (if anchor is already past).
+     */
+    async upsertMentoringSessionOneFromJumpstart(
+        pastorIdStr: string,
+        jumpstartCompletedAt: Date,
+    ): Promise<void> {
+        try {
+            const pastorOid = new Types.ObjectId(pastorIdStr);
+
+            const pastor = await this.userModel
+                .findById(pastorOid)
+                .select('assignedId role')
+                .lean()
+                .exec();
+
+            if (!pastor) {
+                return;
+            }
+
+            if (pastor.role !== ROLES.PASTOR) {
+                return;
+            }
+
+            const mentorRef = pastor.assignedId?.[0];
+            if (!mentorRef) {
+                this.logger.warn(`Jumpstart Session 1 skipped — pastor ${pastorIdStr} has no mentor assigned.`);
+                return;
+            }
+
+            const mentorOid =
+                mentorRef instanceof Types.ObjectId ? mentorRef : new Types.ObjectId(String(mentorRef));
+
+            let extrasDocs = await this.extrasModel.find({ userId: pastorOid }).exec();
+            let located = this.locatePastorMentoringSessionOneSync(extrasDocs, 1);
+
+            const anchor = new Date(jumpstartCompletedAt.getTime());
+
+            const availability = await this.availabilityModel.findOne({ mentorId: mentorOid }).lean().exec();
+            const durationMinutes = availability?.meetingDuration ?? 60;
+            const endTime = new Date(anchor.getTime() + durationMinutes * 60000);
+
+            const nowMs = Date.now();
+            const appointmentStatus =
+                anchor.getTime() < nowMs ? APPOINTMENT_STATUSES.MISSED : APPOINTMENT_STATUSES.SCHEDULED;
+
+            if (located) {
+                let apptStr: string | null = null;
+                const rawAid = located.appointmentIdRaw;
+                if (typeof rawAid === 'string' && Types.ObjectId.isValid(rawAid)) apptStr = rawAid;
+                else if (rawAid instanceof Types.ObjectId) apptStr = rawAid.toString();
+
+                let existingLean =
+                    apptStr && Types.ObjectId.isValid(apptStr)
+                        ? await this.appointmentModel.findById(apptStr).lean().exec()
+                        : null;
+
+                if (!existingLean) {
+                    const createdMissing = await this.appointmentModel.create({
+                        userId: pastorOid,
+                        mentorId: mentorOid,
+                        meetingDate: anchor,
+                        endTime,
+                        platform: APPOINTMENT_PLATFORMS.ZOOM,
+                        status: appointmentStatus,
+                        notes: 'Mentoring Session 1 anchored to Jumpstart completion.',
+                    });
+                    located.dataRef.appointmentId = createdMissing._id.toString();
+                    located.dataRef.originalDate = anchor;
+                    located.dataRef.scheduledDate = anchor;
+                    located.dataRef.status = appointmentStatus;
+                    located.doc.extras![located.idx] = {
+                        ...(located.doc.extras![located.idx] as object),
+                        type: 'APPOINTMENT',
+                        data: located.dataRef,
+                    } as never;
+                    located.doc.markModified('extras');
+                    await located.doc.save();
+                    return;
+                }
+
+                await this.appointmentModel.updateOne(
+                    { _id: new Types.ObjectId(apptStr!) },
+                    {
+                        $set: {
+                            meetingDate: anchor,
+                            endTime,
+                            status: appointmentStatus,
+                        },
+                    },
+                );
+
+                located.dataRef.originalDate = anchor;
+                located.dataRef.scheduledDate = anchor;
+                located.dataRef.status = appointmentStatus;
+                located.doc.extras![located.idx] = {
+                    ...(located.doc.extras![located.idx] as object),
+                    type: 'APPOINTMENT',
+                    data: located.dataRef,
+                } as never;
+                located.doc.markModified('extras');
+                await located.doc.save();
+                return;
+            }
+
+            const phase = await this.resolvePhaseTargetForMentoringSession(1);
+            const extrasQuery = this.buildExtrasAnchoredQuery({
+                userId: pastorOid,
+                roadMapObjectId: phase.roadMapObjectId,
+                nestedRoadMapItemObjectId: phase.nestedRoadMapItemObjectId,
+            });
+
+            extrasDocs = await this.extrasModel.find({ userId: pastorOid }).exec();
+            located = this.locatePastorMentoringSessionOneSync(extrasDocs, 1);
+
+            if (located) {
+                let apptStr: string | null = null;
+                const rawAid = located.appointmentIdRaw;
+                if (typeof rawAid === 'string' && Types.ObjectId.isValid(rawAid)) apptStr = rawAid;
+                else if (rawAid instanceof Types.ObjectId) apptStr = rawAid.toString();
+
+                const existingLean =
+                    apptStr && Types.ObjectId.isValid(apptStr)
+                        ? await this.appointmentModel.findById(apptStr).lean().exec()
+                        : null;
+
+                if (existingLean) {
+                    await this.appointmentModel.updateOne(
+                        { _id: new Types.ObjectId(apptStr!) },
+                        {
+                            $set: {
+                                meetingDate: anchor,
+                                endTime,
+                                status: appointmentStatus,
+                            },
+                        },
+                    );
+                } else {
+                    const createdMissing = await this.appointmentModel.create({
+                        userId: pastorOid,
+                        mentorId: mentorOid,
+                        meetingDate: anchor,
+                        endTime,
+                        platform: APPOINTMENT_PLATFORMS.ZOOM,
+                        status: appointmentStatus,
+                        notes: 'Mentoring Session 1 anchored to Jumpstart completion.',
+                    });
+                    apptStr = createdMissing._id.toString();
+                    located.dataRef.appointmentId = apptStr;
+                }
+
+                located.dataRef.originalDate = anchor;
+                located.dataRef.scheduledDate = anchor;
+                located.dataRef.status = appointmentStatus;
+                located.doc.extras![located.idx] = {
+                    ...(located.doc.extras![located.idx] as object),
+                    type: 'APPOINTMENT',
+                    data: located.dataRef,
+                } as never;
+                located.doc.markModified('extras');
+                await located.doc.save();
+                return;
+            }
+
+            const created = await this.appointmentModel.create({
+                userId: pastorOid,
+                mentorId: mentorOid,
+                meetingDate: anchor,
+                endTime,
+                platform: APPOINTMENT_PLATFORMS.ZOOM,
+                status: appointmentStatus,
+                notes: 'Mentoring Session 1 anchored to Jumpstart completion.',
+            });
+
+            let extrasDoc = await this.extrasModel.findOne(extrasQuery).exec();
+            if (!extrasDoc) {
+                extrasDoc = await this.extrasModel.create({
+                    userId: pastorOid,
+                    roadMapId: phase.roadMapObjectId,
+                    nestedRoadMapItemId: phase.nestedRoadMapItemObjectId,
+                    extras: [],
+                });
+            }
+
+            extrasDoc.extras!.push({
+                type: 'APPOINTMENT',
+                data: {
+                    sessionNumber: 1,
+                    title: 'Session 1',
+                    appointmentId: created._id.toString(),
+                    originalDate: anchor,
+                    scheduledDate: anchor,
+                    isCompleted: false,
+                    isConfirmed: false,
+                    isRedo: false,
+                    status: appointmentStatus,
+                    mentorNote: SESSION_NOTES[0] || '',
+                    pastorNote: '',
+                },
+            } as never);
+
+            extrasDoc.markModified('extras');
+            await extrasDoc.save();
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            this.logger.error(`Jumpstart Session 1 sync failed for pastor ${pastorIdStr}: ${msg}`);
+        }
+    }
+
+    /** After extras write: if this is the onboarding (“single”) roadmap and it is finished, anchor Session 1. */
+    private async maybeSyncJumpstartSessionOneAfterRoadmapCompletion(
+        pastorUserIdObjectId: Types.ObjectId,
+        roadMapObjectId: Types.ObjectId,
+    ): Promise<void> {
+        const roadmapRow = await this.roadMapModel
+            .findById(roadMapObjectId)
+            .select('type')
+            .lean()
+            .exec();
+
+        const isSingleJumpstartRoadmap =
+            roadmapRow?.type?.trim()?.toLowerCase() === 'single';
+
+        if (!isSingleJumpstartRoadmap) {
+            return;
+        }
+
+        const progress = await this.progressModel
+            .findOne({
+                $or: [
+                    { userId: pastorUserIdObjectId },
+                    { userId: pastorUserIdObjectId.toString() },
+                ],
+            })
+            .lean()
+            .exec();
+
+        const entry = progress?.roadmaps?.find(
+            (r: { roadMapId: Types.ObjectId }) =>
+                r.roadMapId.toString() === roadMapObjectId.toString(),
+        );
+
+        const totalSteps = typeof entry?.totalSteps === 'number' ? entry.totalSteps : 0;
+
+        if (!entry || totalSteps <= 0) {
+            return;
+        }
+
+        if (entry.completedSteps < entry.totalSteps) {
+            return;
+        }
+
+        await this.upsertMentoringSessionOneFromJumpstart(pastorUserIdObjectId.toString(), new Date());
+    }
+
     async getUserRoadmaps(userId: string) {
         const progress = await this.progressModel
             .findOne({ userId })
@@ -1370,7 +1727,7 @@ export class RoadMapsService {
 
         const sorted = this.sortRoadmapsByLibraryOrder(roadmaps);
 
-        return sorted.map(rm => {
+        return sorted.map((rm: any) => {
             const progressData = progress.roadmaps.find(
                 p => p.roadMapId.toString() === rm._id.toString(),
             );
@@ -1400,6 +1757,13 @@ export class RoadMapsService {
         );
 
         const sessionNumber = allSessions.length + 1;
+
+        if (sessionNumber > MENTORING_JOURNEY_SESSION_MAX) {
+            this.logger.verbose(
+                `Mentoring session materialization capped at Session ${MENTORING_JOURNEY_SESSION_MAX}.`,
+            );
+            return;
+        }
 
         // PREVENT DUPLICATE SESSION CREATION (CRITICAL FIX)
         const alreadyExists = await this.extrasModel.findOne({
@@ -1652,10 +2016,13 @@ export class RoadMapsService {
                 }
             }
         );
-        // CREATE NEXT SESSION
-        await this.getMentorFromPastor(
-            extrasDoc.userId.toString()
-        );
+        const sn =
+            typeof session?.data?.sessionNumber === 'number' ? session.data.sessionNumber : 0;
+        if (sn >= 1 && sn < MENTORING_JOURNEY_SESSION_MAX) {
+            await this.getMentorFromPastor(
+                extrasDoc.userId.toString()
+            );
+        }
     }
 
     async redoSession(appointmentId: string) {
