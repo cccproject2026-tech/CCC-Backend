@@ -107,6 +107,9 @@ export class AppointmentResponseDto {
     mentorGoogleCalendarEventId?: string | null;
     userGoogleCalendarEventId?: string | null;
 
+    /** Populated on create when OAuth is missing or Calendar API errors; empty when both sides synced. */
+    googleCalendarSyncWarnings?: string[];
+
     createdAt?: Date;
     updatedAt?: Date;
 }

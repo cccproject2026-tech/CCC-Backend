@@ -214,12 +214,13 @@ export class AppointmentsService {
         end: Date;
         topic: string;
         description?: string;
-    }): Promise<void> {
+    }): Promise<string[]> {
         const { appointmentId, mentorId, userId, start, end, topic, description } = params;
         const ext = { cccAppointmentId: appointmentId.toString() };
+        const warnings: string[] = [];
 
         try {
-            const [mentorEv, userEv] = await Promise.all([
+            const [mentorRes, userRes] = await Promise.all([
                 this.googleCalendarService.createEvent(mentorId, {
                     title: topic,
                     description,
@@ -236,18 +237,44 @@ export class AppointmentsService {
                 }),
             ]);
 
+            if (!mentorRes.ok) {
+                if (mentorRes.reason === 'not_linked') {
+                    warnings.push(
+                        'Mentor has not linked Google Calendar (OAuth). No event was created on the mentor calendar.',
+                    );
+                } else {
+                    warnings.push(
+                        `Google Calendar could not create mentor event: ${mentorRes.message ?? 'unknown error'}`,
+                    );
+                }
+            }
+            if (!userRes.ok) {
+                if (userRes.reason === 'not_linked') {
+                    warnings.push(
+                        'Participant has not linked Google Calendar (OAuth). No event was created on their calendar.',
+                    );
+                } else {
+                    warnings.push(
+                        `Google Calendar could not create participant event: ${userRes.message ?? 'unknown error'}`,
+                    );
+                }
+            }
+
             await this.appointmentModel.updateOne(
                 { _id: appointmentId },
                 {
                     $set: {
-                        mentorGoogleCalendarEventId: mentorEv?.id ?? null,
-                        userGoogleCalendarEventId: userEv?.id ?? null,
+                        mentorGoogleCalendarEventId: mentorRes.ok ? mentorRes.id : null,
+                        userGoogleCalendarEventId: userRes.ok ? userRes.id : null,
                     },
                 },
             );
+            return warnings;
         } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
             this.logger.warn(`Google Calendar sync after booking failed: ${msg}`);
+            warnings.push(`Google Calendar sync failed unexpectedly: ${msg}`);
+            return warnings;
         }
     }
 
@@ -807,7 +834,7 @@ export class AppointmentsService {
             }
         );
 
-        await this.syncGoogleCalendarAfterBooking({
+        const googleCalendarSyncWarnings = await this.syncGoogleCalendarAfterBooking({
             appointmentId: saved._id as Types.ObjectId,
             mentorId: dto.mentorId,
             userId: dto.userId,
@@ -820,6 +847,19 @@ export class AppointmentsService {
         });
 
         const result = toAppointmentResponseDto(populated as AppointmentDocument);
+
+        const googleRow = await this.appointmentModel
+            .findById(saved._id)
+            .select('mentorGoogleCalendarEventId userGoogleCalendarEventId')
+            .lean()
+            .exec();
+        if (googleRow) {
+            result.mentorGoogleCalendarEventId = googleRow.mentorGoogleCalendarEventId ?? undefined;
+            result.userGoogleCalendarEventId = googleRow.userGoogleCalendarEventId ?? undefined;
+        }
+        if (googleCalendarSyncWarnings.length > 0) {
+            result.googleCalendarSyncWarnings = googleCalendarSyncWarnings;
+        }
 
         try {
             const whenLabel = formatMeetingDateForNotification(result.meetingDate);

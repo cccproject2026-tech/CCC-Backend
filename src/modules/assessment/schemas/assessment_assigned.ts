@@ -12,6 +12,10 @@ export class AssessmentAssigned {
     @Prop({ type: Types.ObjectId, ref: 'User', required: true })
     userId: Types.ObjectId;
 
+    /** When assigned (mirrors embedded `Assessment.assignments[].assignedAt` when present). */
+    @Prop({ type: Date })
+    assignedAt?: Date;
+
     @Prop({ type: Date })
     dueDate?: Date;
 

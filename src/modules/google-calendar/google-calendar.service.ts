@@ -5,6 +5,11 @@ import { UsersService } from '../users/users.service';
 
 export type BusyInterval = { start: Date; end: Date };
 
+/** Result from `events.insert`; distinguishes missing OAuth vs API failure (both used to recover sync issues). */
+export type GoogleCalendarInsertResult =
+    | { ok: true; id: string }
+    | { ok: false; reason: 'not_linked' | 'calendar_error'; message?: string };
+
 /**
  * Removes `[gap.start, gap.end]` overlap from busy intervals (e.g. exclude current appointment while rescheduling).
  */
@@ -196,9 +201,11 @@ export class GoogleCalendarService {
             end: string;
             extendedPrivateProps?: Record<string, string>;
         },
-    ): Promise<{ id?: string | null } | null> {
+    ): Promise<GoogleCalendarInsertResult> {
         const ctx = await this.getCalendarContext(userId);
-        if (!ctx) return null;
+        if (!ctx) {
+            return { ok: false, reason: 'not_linked' };
+        }
 
         const { calendar, calendarId } = ctx;
 
@@ -222,11 +229,15 @@ export class GoogleCalendarService {
                             : undefined,
                 },
             });
-            return { id: res.data.id ?? null };
+            const id = res.data.id;
+            if (!id) {
+                return { ok: false, reason: 'calendar_error', message: 'Google Calendar returned no event id' };
+            }
+            return { ok: true, id };
         } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
             this.logger.warn(`Google Calendar createEvent failed for user ${userId}: ${msg}`);
-            return null;
+            return { ok: false, reason: 'calendar_error', message: msg };
         }
     }
 

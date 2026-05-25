@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
@@ -23,6 +24,8 @@ import { assessmentSectionRecommendationNotification } from '../../common/utils/
 
 @Injectable()
 export class AssessmentService {
+  private readonly logger = new Logger(AssessmentService.name);
+
   constructor(
     @InjectModel(Assessment.name)
     private readonly assessmentModel: Model<AssessmentDocument>,
@@ -188,6 +191,27 @@ export class AssessmentService {
       .lean()
       .exec();
 
+    const assignedAtBatch = new Date();
+    await this.assessmentAssignedModel.bulkWrite(
+      newUsers.map((user) => ({
+        updateOne: {
+          filter: {
+            assessmentId: new Types.ObjectId(assessmentId),
+            userId: user._id,
+          },
+          update: {
+            $setOnInsert: {
+              assessmentId: new Types.ObjectId(assessmentId),
+              userId: user._id,
+              status: ASSESSMENT_ASSIGNMENT_STATUSES.ASSIGNED,
+              assignedAt: assignedAtBatch,
+            },
+          },
+          upsert: true,
+        },
+      })),
+    );
+
     const assessmentTitle = assessment.name;
 
     for (const u of newUsers) {
@@ -222,57 +246,180 @@ export class AssessmentService {
     return updated;
   }
 
-  // Get all assessments assigned to a specific user
-  async getAssignedAssessments(userId: string) {
+  /** Populated-assessment projection returned for pastors (single source merged with embedded-only legacy rows). */
+  private static readonly ASSIGNED_ASSESSMENT_SELECT =
+    'name description bannerImage instructions sections type preSurvey createdAt updatedAt';
 
+  /**
+   * All assessments the user appears on via `AssessmentAssigned` OR legacy `Assessment.assignments[]`
+   * (those paths were disconnected for POST /assign until we upserted AssessmentAssigned).
+   */
+  async getAssignedAssessments(userId: string) {
     if (!Types.ObjectId.isValid(userId)) {
       throw new BadRequestException('Invalid user ID format');
     }
 
     const userObjectId = new Types.ObjectId(userId);
+    const pairKey = (assessmentIdStr: string) => `${assessmentIdStr}::${userObjectId.toString()}`;
+    const coveredPairs = new Set<string>();
 
-    const assignments = await this.assessmentAssignedModel
+    type LeanAssigned = AssessmentAssignedDocument & {
+      createdAt?: Date;
+      assessmentId?: unknown;
+      answerId?: unknown;
+      appointmentId?: unknown;
+    };
+
+    const assignedDocs = (await this.assessmentAssignedModel
       .find({ userId: userObjectId })
       .populate({
         path: 'assessmentId',
-        select: 'name description bannerImage instructions sections'
+        select: AssessmentService.ASSIGNED_ASSESSMENT_SELECT,
       })
       .populate({
-        path: 'answerId'
+        path: 'answerId',
       })
       .populate({
         path: 'appointmentId',
-        select: 'meetingDate endTime platform meetingLink status notes zoomMeeting zoomMeetingId userId mentorId',
+        select:
+          'meetingDate endTime platform meetingLink status notes zoomMeeting zoomMeetingId userId mentorId',
         populate: [
           {
             path: 'userId',
-            select: 'firstName lastName email phoneNumber profilePicture role roleId status',
+            select:
+              'firstName lastName email phoneNumber profilePicture role roleId status',
           },
           {
             path: 'mentorId',
-            select: 'firstName lastName email phoneNumber profilePicture role roleId status',
+            select:
+              'firstName lastName email phoneNumber profilePicture role roleId status',
           },
         ],
       })
       .sort({ createdAt: -1 })
       .lean()
+      .exec()) as unknown as LeanAssigned[];
+
+    const rows: {
+      assignmentId: Types.ObjectId;
+      userId: string;
+      assessment: unknown;
+      status: string;
+      assignedAt: Date | null;
+      dueDate: Date | null | undefined;
+      startedAt: Date | null | undefined;
+      submittedAt: Date | null | undefined;
+      answer: unknown;
+      appointment: unknown;
+    }[] = [];
+
+    for (const a of assignedDocs) {
+      const populated = a.assessmentId as { _id?: Types.ObjectId } | Types.ObjectId | null;
+      const assessmentIdStr =
+        populated &&
+        typeof populated === 'object' &&
+        '_id' in populated &&
+        populated._id != null
+          ? populated._id.toString()
+          : (a.assessmentId as Types.ObjectId | undefined)?.toString?.();
+
+      if (assessmentIdStr) {
+        coveredPairs.add(pairKey(assessmentIdStr));
+      }
+
+      rows.push({
+        assignmentId: a._id as Types.ObjectId,
+        userId: userObjectId.toString(),
+        assessment: populated,
+        status: a.status,
+        assignedAt: a.assignedAt ?? a.createdAt ?? null,
+        dueDate: a.dueDate,
+        startedAt: a.startedAt,
+        submittedAt: a.submittedAt,
+        answer: a.answerId,
+        appointment: a.appointmentId,
+      });
+    }
+
+    const assessmentsWithEmbedded = await this.assessmentModel
+      .find({ 'assignments.userId': userObjectId })
+      .select(`${AssessmentService.ASSIGNED_ASSESSMENT_SELECT} assignments`)
+      .lean()
       .exec();
 
-    return assignments.map(a => ({
-      assignmentId: a._id,
+    for (const doc of assessmentsWithEmbedded) {
+      const embeddedList =
+        ((doc as { assignments?: { userId: Types.ObjectId }[] }).assignments) ?? [];
+      for (const sub of embeddedList) {
+        const subUserIdRaw = (sub as { userId?: Types.ObjectId | string })?.userId;
+        const uid =
+          subUserIdRaw && typeof subUserIdRaw === 'object' && 'toString' in subUserIdRaw
+            ? (subUserIdRaw as Types.ObjectId).toString()
+            : String(subUserIdRaw ?? '');
+        if (uid !== userObjectId.toString()) continue;
 
-      assessment: a.assessmentId,
+        const aid = (doc._id as Types.ObjectId).toString();
+        if (coveredPairs.has(pairKey(aid))) {
+          continue;
+        }
 
-      dueDate: a.dueDate,
-      status: a.status,
+        const subOid = (sub as { _id?: Types.ObjectId })._id;
+        if (!subOid) {
+          this.logger.warn(
+            `Skipping embedded assignment on assessment ${aid}: missing subdocument _id for user ${userId}`,
+          );
+          continue;
+        }
 
-      startedAt: a.startedAt,
-      submittedAt: a.submittedAt,
+        coveredPairs.add(pairKey(aid));
 
-      answer: a.answerId,
-      appointment: a.appointmentId
+        const docPlain = doc as unknown as Record<string, unknown>;
+        const { assignments: _omitAssignments, ...assessmentProjection } = docPlain;
+        void _omitAssignments;
+
+        const subEmbed = sub as { status?: string };
+
+        rows.push({
+          assignmentId: subOid,
+          userId: userObjectId.toString(),
+          assessment: assessmentProjection as unknown,
+          status:
+            subEmbed.status && String(subEmbed.status).length > 0
+              ? String(subEmbed.status)
+              : ASSESSMENT_ASSIGNMENT_STATUSES.ASSIGNED,
+          assignedAt: (sub as { assignedAt?: Date }).assignedAt ?? null,
+          dueDate: null,
+          startedAt: undefined,
+          submittedAt: undefined,
+          answer: null,
+          appointment: null,
+        });
+      }
+    }
+
+    rows.sort((r1, r2) => {
+      const t1 = r1.assignedAt ? new Date(r1.assignedAt).getTime() : 0;
+      const t2 = r2.assignedAt ? new Date(r2.assignedAt).getTime() : 0;
+      return t2 - t1;
+    });
+
+    return rows.map((r) => ({
+      assignmentId: r.assignmentId,
+      userId: r.userId,
+
+      assessment: r.assessment,
+
+      /** Top-level parity with prior API + frontend expectation */
+      status: r.status,
+      assignedAt: r.assignedAt,
+      dueDate: r.dueDate,
+
+      startedAt: r.startedAt,
+      submittedAt: r.submittedAt,
+
+      answer: r.answer,
+      appointment: r.appointment,
     }));
-
   }
 
   async saveOrUpdateSectionAnswers(
