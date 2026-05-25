@@ -82,25 +82,33 @@ export class GoogleCalendarService {
     }
 
     /**
-     * Authenticated Calendar API for this user; refreshes tokens when needed.
-     * Returns null if Calendar is not linked or OAuth refresh fails.
+     * Live OAuth credential row (must not use `UsersService.findById`, which strips tokens for API responses).
      */
-    async getAuthorizedCalendar(userId: string): Promise<calendar_v3.Calendar | null> {
-        const user = await this.usersService.findById(userId);
-        if (!user?.googleRefreshToken && !user?.googleAccessToken) {
+    private async getCalendarContext(userId: string): Promise<{
+        calendar: calendar_v3.Calendar;
+        calendarId: string;
+    } | null> {
+        const creds = await this.usersService.getGoogleOAuthCalendarCredentials(userId);
+
+        if (!creds?.googleRefreshToken && !creds?.googleAccessToken) {
             return null;
         }
 
+        const calendarIdRaw =
+            typeof creds.googleCalendarId === 'string' && creds.googleCalendarId.trim().length > 0
+                ? creds.googleCalendarId.trim()
+                : 'primary';
+
         const oauth2 = this.createBareOAuth2Client();
         oauth2.setCredentials({
-            access_token: user.googleAccessToken,
-            refresh_token: user.googleRefreshToken,
-            expiry_date: user.googleTokenExpiry,
+            access_token: creds.googleAccessToken,
+            refresh_token: creds.googleRefreshToken,
+            expiry_date: creds.googleTokenExpiry,
         });
 
         const needsRefresh =
-            !!user.googleRefreshToken &&
-            (!user.googleTokenExpiry || Date.now() >= Number(user.googleTokenExpiry) - 60_000);
+            !!creds.googleRefreshToken &&
+            (!creds.googleTokenExpiry || Date.now() >= Number(creds.googleTokenExpiry) - 60_000);
 
         if (needsRefresh) {
             try {
@@ -112,9 +120,9 @@ export class GoogleCalendarService {
                 await this.usersService.update(userId, patch as never);
 
                 oauth2.setCredentials({
-                    access_token: credentials.access_token ?? user.googleAccessToken,
-                    refresh_token: credentials.refresh_token ?? user.googleRefreshToken,
-                    expiry_date: credentials.expiry_date ?? user.googleTokenExpiry,
+                    access_token: credentials.access_token ?? creds.googleAccessToken,
+                    refresh_token: credentials.refresh_token ?? creds.googleRefreshToken,
+                    expiry_date: credentials.expiry_date ?? creds.googleTokenExpiry,
                 });
             } catch (err: unknown) {
                 const msg = err instanceof Error ? err.message : String(err);
@@ -123,24 +131,41 @@ export class GoogleCalendarService {
             }
         }
 
-        return google.calendar({ version: 'v3', auth: oauth2 });
+        const calendar = google.calendar({ version: 'v3', auth: oauth2 });
+        return { calendar, calendarId: calendarIdRaw };
     }
 
-    /** Busy intervals on the user's primary calendar (same signals Meet uses for conflict detection). */
+    /**
+     * Authenticated Calendar API client (legacy helper).
+     */
+    async getAuthorizedCalendar(userId: string): Promise<calendar_v3.Calendar | null> {
+        const ctx = await this.getCalendarContext(userId);
+        return ctx?.calendar ?? null;
+    }
+
+    /** True when the user has stored Google OAuth tokens (Calendar scope). */
+    async hasLinkedCalendar(userId: string): Promise<boolean> {
+        const creds = await this.usersService.getGoogleOAuthCalendarCredentials(userId);
+        return !!(creds?.googleRefreshToken || creds?.googleAccessToken);
+    }
+
+    /** Busy intervals on the user's linked Google calendar (see `googleCalendarId`, default `primary`). */
     async listBusyIntervals(userId: string, rangeStart: Date, rangeEnd: Date): Promise<BusyInterval[]> {
-        const calendar = await this.getAuthorizedCalendar(userId);
-        if (!calendar) return [];
+        const ctx = await this.getCalendarContext(userId);
+        if (!ctx) return [];
+
+        const { calendar, calendarId } = ctx;
 
         try {
             const res = await calendar.freebusy.query({
                 requestBody: {
                     timeMin: rangeStart.toISOString(),
                     timeMax: rangeEnd.toISOString(),
-                    items: [{ id: 'primary' }],
+                    items: [{ id: calendarId }],
                 },
             });
 
-            const busy = res.data.calendars?.primary?.busy ?? [];
+            const busy = res.data.calendars?.[calendarId]?.busy ?? [];
             return busy
                 .filter((b): b is { start?: string | null; end?: string | null } => !!(b?.start && b?.end))
                 .map((b) => ({
@@ -154,7 +179,7 @@ export class GoogleCalendarService {
         }
     }
 
-    /** Returns true only when Google Calendar is linked and `primary` has no overlap in `[start,end)`. */
+    /** Returns true only when Google Calendar is linked and the target calendar has no overlap in `[start,end)`. */
     async checkAvailability(userId: string, startIso: string, endIso: string): Promise<boolean> {
         const start = new Date(startIso);
         const end = new Date(endIso);
@@ -172,12 +197,14 @@ export class GoogleCalendarService {
             extendedPrivateProps?: Record<string, string>;
         },
     ): Promise<{ id?: string | null } | null> {
-        const calendar = await this.getAuthorizedCalendar(userId);
-        if (!calendar) return null;
+        const ctx = await this.getCalendarContext(userId);
+        if (!ctx) return null;
+
+        const { calendar, calendarId } = ctx;
 
         try {
             const res = await calendar.events.insert({
-                calendarId: 'primary',
+                calendarId,
                 requestBody: {
                     summary: data.title,
                     description: data.description,
@@ -204,12 +231,14 @@ export class GoogleCalendarService {
     }
 
     async updateEvent(userId: string, eventId: string, start: string, end: string): Promise<boolean> {
-        const calendar = await this.getAuthorizedCalendar(userId);
-        if (!calendar) return false;
+        const ctx = await this.getCalendarContext(userId);
+        if (!ctx) return false;
+
+        const { calendar, calendarId } = ctx;
 
         try {
             await calendar.events.patch({
-                calendarId: 'primary',
+                calendarId,
                 eventId,
                 requestBody: {
                     start: {
@@ -231,12 +260,14 @@ export class GoogleCalendarService {
     }
 
     async deleteEvent(userId: string, eventId: string): Promise<boolean> {
-        const calendar = await this.getAuthorizedCalendar(userId);
-        if (!calendar) return false;
+        const ctx = await this.getCalendarContext(userId);
+        if (!ctx) return false;
+
+        const { calendar, calendarId } = ctx;
 
         try {
             await calendar.events.delete({
-                calendarId: 'primary',
+                calendarId,
                 eventId,
             });
             return true;

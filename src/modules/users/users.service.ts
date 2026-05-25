@@ -194,6 +194,29 @@ export class UsersService {
         };
     }
 
+    /**
+     * Google Calendar OAuth fields only — never mixed into public `findById` / `toUserResponseDto`.
+     */
+    async getGoogleOAuthCalendarCredentials(userId: string): Promise<{
+        googleAccessToken?: string;
+        googleRefreshToken?: string;
+        googleTokenExpiry?: number;
+        googleCalendarId?: string | null;
+    } | null> {
+        const u = await this.userModel
+            .findById(userId)
+            .select('googleAccessToken googleRefreshToken googleTokenExpiry googleCalendarId')
+            .lean()
+            .exec();
+        if (!u) return null;
+        return {
+            googleAccessToken: u.googleAccessToken ?? undefined,
+            googleRefreshToken: u.googleRefreshToken ?? undefined,
+            googleTokenExpiry: u.googleTokenExpiry ?? undefined,
+            googleCalendarId: u.googleCalendarId ?? undefined,
+        };
+    }
+
     async findById(id: string): Promise<any> {
         const user = await this.userModel
             .findById(id)

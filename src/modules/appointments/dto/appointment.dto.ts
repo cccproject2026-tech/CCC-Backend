@@ -103,6 +103,10 @@ export class AppointmentResponseDto {
     transcriptSummarySavedAt?: Date;
     transcriptSummaryModel?: string;
 
+    /** Google Calendar event ids when sync succeeded (mentor + participant calendars). */
+    mentorGoogleCalendarEventId?: string | null;
+    userGoogleCalendarEventId?: string | null;
+
     createdAt?: Date;
     updatedAt?: Date;
 }
