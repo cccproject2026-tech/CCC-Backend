@@ -9,6 +9,8 @@ export const toExtrasResponseDto = (doc: ExtrasDocument | any): ExtrasResponseDt
         nestedRoadMapItemId: doc.nestedRoadMapItemId?.toString(),
         extras: doc.extras || [],
         uploadedDocuments: doc.uploadedDocuments || [],
+        isResubmitted: doc.isResubmitted ?? false,
+        resubmittedAt: doc.resubmittedAt ?? undefined,
         createdAt: doc.createdAt,
         updatedAt: doc.updatedAt,
     };

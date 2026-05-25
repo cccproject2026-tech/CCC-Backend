@@ -61,6 +61,8 @@ export class ExtrasResponseDto {
     nestedRoadMapItemId?: string;
     extras: Record<string, any>[];
     uploadedDocuments?: ExtrasDocumentDto[];
+    isResubmitted?: boolean;
+    resubmittedAt?: Date;
     createdAt: Date;
     updatedAt: Date;
 }

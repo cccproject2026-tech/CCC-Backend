@@ -12,6 +12,14 @@ export class AssignRoadmapDto {
     @ArrayMinSize(1)
     @IsMongoId({ each: true })
     roadMapIds: Types.ObjectId[];
+
+    @IsOptional()
+    @IsMongoId()
+    assignedBy?: string;
+
+    @IsOptional()
+    @IsDateString()
+    dueDate?: string;
 }
 
 export class AssignAssessmentDto {

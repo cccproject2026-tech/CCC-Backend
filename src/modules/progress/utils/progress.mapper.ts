@@ -15,6 +15,9 @@ class ProgressRoadmapDto {
     totalSteps: number;
     progressPercentage: number;
     status: string;
+    assignedAt?: Date;
+    assignedBy?: Types.ObjectId;
+    dueDate?: Date;
     nestedRoadmaps: NestedRoadmapProgressDto[];
 }
 
@@ -109,6 +112,9 @@ export function toProgressResponseDto(doc: ProgressDocument): ProgressResponseDt
             totalSteps: r.totalSteps,
             progressPercentage: r.progressPercentage,
             status: r.status,
+            assignedAt: r.assignedAt ?? undefined,
+            assignedBy: r.assignedBy ?? undefined,
+            dueDate: r.dueDate ?? undefined,
             nestedRoadmaps: (r.nestedRoadmaps || []).map(nested => ({
                 nestedRoadmapId: nested.nestedRoadmapId,
                 completedSteps: nested.completedSteps,

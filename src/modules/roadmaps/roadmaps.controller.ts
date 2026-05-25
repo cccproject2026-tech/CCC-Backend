@@ -80,6 +80,20 @@ export class RoadMapsController {
         return this.roadMapsService.getUserRoadmaps(userId);
     }
 
+    @Get('mentor/:mentorId/resubmitted')
+    async getResubmittedExtrasForMentor(
+        @Param('mentorId', ParseMongoIdPipe) mentorId: string,
+    ): Promise<BaseResponse<ExtrasResponseDto[]>> {
+        const extras = await this.roadMapsService.getResubmittedExtrasForMentor(mentorId);
+        return {
+            success: true,
+            message: extras.length > 0
+                ? 'Resubmitted extras fetched successfully'
+                : 'No resubmitted extras found',
+            data: extras,
+        };
+    }
+
     // @Get(':id/details')
     // async getRoadMapDetails(@Param('id') id: string): Promise<BaseResponse<any>> {
 

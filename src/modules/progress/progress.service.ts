@@ -156,6 +156,9 @@ export class ProgressService {
                         totalSteps: roadMapData?.totalSteps || 0,
                         progressPercentage: 0,
                         status: PROGRESS_STATUSES.NOT_STARTED,
+                        assignedAt: new Date(),
+                        assignedBy: dto.assignedBy ? new Types.ObjectId(dto.assignedBy) : null,
+                        dueDate: dto.dueDate ? new Date(dto.dueDate) : null,
                         nestedRoadmaps: nestedRoadmaps,
                     };
                 });

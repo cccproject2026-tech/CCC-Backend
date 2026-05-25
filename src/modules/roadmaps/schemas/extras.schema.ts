@@ -41,6 +41,12 @@ export class Extras {
         }[];
     }[];
 
+    @Prop({ type: Boolean, default: false })
+    isResubmitted: boolean;
+
+    @Prop({ type: Date, default: null })
+    resubmittedAt?: Date;
+
     createdAt?: Date;
     updatedAt?: Date;
 }
@@ -53,3 +59,4 @@ export const ExtrasSchema = SchemaFactory.createForClass(Extras);
 
 ExtrasSchema.index({ userId: 1, roadMapId: 1 });
 ExtrasSchema.index({ userId: 1, roadMapId: 1, nestedRoadMapItemId: 1 }, { unique: true });
+ExtrasSchema.index({ isResubmitted: 1, userId: 1 });

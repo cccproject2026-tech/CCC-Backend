@@ -22,6 +22,9 @@ export class Progress {
                 enum: VALID_PROGRESS_STATUSES,
                 default: PROGRESS_STATUSES.NOT_STARTED,
             },
+            assignedAt: { type: Date, default: Date.now },
+            assignedBy: { type: Types.ObjectId, ref: "User", default: null },
+            dueDate: { type: Date, default: null },
             nestedRoadmaps: {
                 type: [{
                     _id: false,
@@ -45,6 +48,9 @@ export class Progress {
         totalSteps: number;
         progressPercentage: number;
         status: string;
+        assignedAt?: Date;
+        assignedBy?: Types.ObjectId;
+        dueDate?: Date;
         nestedRoadmaps: {
             nestedRoadmapId: Types.ObjectId;
             completedSteps: number;
@@ -287,3 +293,5 @@ ProgressSchema.index({ 'roadmaps.roadMapId': 1 });
 ProgressSchema.index({ createdAt: 1 });
 ProgressSchema.index({ updatedAt: -1 });
 ProgressSchema.index({ userId: 1, 'finalComments.createdAt': -1 });
+ProgressSchema.index({ 'roadmaps.assignedBy': 1 });
+ProgressSchema.index({ 'roadmaps.dueDate': 1 });

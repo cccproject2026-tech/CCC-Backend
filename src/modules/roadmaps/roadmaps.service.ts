@@ -1042,6 +1042,8 @@ export class RoadMapsService {
             return toExtrasResponseDto(updatedExtras as any);
         }
 
+        const wasAlreadyCompleted = roadmapProgress.status === 'completed';
+
         if (roadmapProgress.completedSteps >= roadmapProgress.totalSteps) {
             await this.progressModel.updateOne(
                 {
@@ -1056,6 +1058,18 @@ export class RoadMapsService {
                         'roadmaps.$.status': 'completed'
                     }
                 }
+            );
+        }
+
+        if (wasAlreadyCompleted && newItemsCount > 0) {
+            await this.extrasModel.updateOne(
+                { _id: updatedExtras._id },
+                {
+                    $set: {
+                        isResubmitted: true,
+                        resubmittedAt: new Date(),
+                    },
+                },
             );
         }
 
@@ -2153,5 +2167,27 @@ export class RoadMapsService {
         );
 
         return sessions.sort((a, b) => a.sessionNumber - b.sessionNumber);
+    }
+
+    async getResubmittedExtrasForMentor(mentorId: string): Promise<ExtrasResponseDto[]> {
+        const mentorObjectId = new Types.ObjectId(mentorId);
+
+        const assignedPastors = await this.userModel.find(
+            { assignedId: mentorObjectId },
+            { _id: 1 },
+        ).lean().exec();
+
+        if (assignedPastors.length === 0) {
+            return [];
+        }
+
+        const pastorIds = assignedPastors.map(p => p._id);
+
+        const resubmittedExtras = await this.extrasModel.find({
+            userId: { $in: pastorIds },
+            isResubmitted: true,
+        }).lean().exec();
+
+        return resubmittedExtras.map(doc => toExtrasResponseDto(doc as any));
     }
 }
