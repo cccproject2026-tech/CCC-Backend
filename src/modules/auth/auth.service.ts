@@ -202,13 +202,17 @@ export class AuthService {
     }
 
     async handleGoogleCallback(code: string, userId: string) {
+        await this.usersService.findById(userId);
         const tokens = await this.googleService.getTokens(code);
+        /** `findById` strips OAuth fields from the payload; must read secrets from DB separately. */
+        const existingOAuth = await this.usersService.getGoogleOAuthCalendarCredentials(userId);
 
-        const existingUser = await this.usersService.findById(userId);
-
+        const nextRefreshToken = tokens.refresh_token ?? existingOAuth?.googleRefreshToken;
         await this.usersService.update(userId, {
             googleAccessToken: tokens.access_token ?? undefined,
-            googleRefreshToken: tokens.refresh_token ?? existingUser.googleRefreshToken,
+            ...(nextRefreshToken !== undefined && nextRefreshToken !== null
+                ? { googleRefreshToken: nextRefreshToken }
+                : {}),
             googleTokenExpiry: tokens.expiry_date ?? undefined,
         });
 
