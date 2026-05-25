@@ -1,4 +1,4 @@
-import { Controller, Post, Body, Get, Param, Patch, Query, HttpCode, Headers, Logger, Req, BadRequestException, Delete } from '@nestjs/common';
+import { Controller, Post, Body, Get, Param, Patch, Query, HttpCode, Headers, Logger, Req, BadRequestException, Delete, Put } from '@nestjs/common';
 import { AppointmentsService } from './appointments.service';
 import { CreateAppointmentDto, AppointmentResponseDto, UpdateAppointmentDto, CancelAppointmentDto, TranscriptSummaryResponseDto } from './dto/appointment.dto';
 import { BaseResponse } from 'src/shared/interfaces/base-response.interface';
@@ -99,6 +99,32 @@ export class AppointmentsController {
             message: 'Appointment updated successfully.',
             data,
         };
+    }
+
+    /** REST alias for clients expecting `PUT /appointments/:id`. */
+    @Put(':id')
+    async putUpdate(
+        @Param('id') id: string,
+        @Body() dto: UpdateAppointmentDto,
+    ): Promise<BaseResponse<AppointmentResponseDto>> {
+        const data = await this.appointmentsService.update(id, dto);
+        return {
+            success: true,
+            message: 'Appointment updated successfully.',
+            data,
+        };
+    }
+
+    /**
+     * REST alias for `PATCH .../cancel` — cancels a scheduled appointment and removes Google Calendar events.
+     */
+    @Delete(':id')
+    async deleteAppointment(
+        @Param('id') id: string,
+        @Query('reason') reason?: string,
+    ): Promise<BaseResponse<unknown>> {
+        const data = await this.appointmentsService.cancel(id, { reason });
+        return { success: true, message: 'Appointment cancelled.', data };
     }
 
     @Post('availability/recurring')
@@ -250,6 +276,27 @@ export class AppointmentsController {
         return {
             success: true,
             message: 'Weekly availability fetched successfully.',
+            data,
+        };
+    }
+
+    /**
+     * REST shape `GET /appointments/:userId` — appointments where this user is mentee OR mentor/director mentor role.
+     * Declared after static paths (`upcoming`, `user/`, `availability/`, etc.) so it only matches a single Mongo id segment.
+     */
+    @Get(':userId')
+    async getAppointmentsByUserRoute(
+        @Param('userId', ParseMongoIdPipe) userId: string,
+        @Query('futureOnly') futureOnly: string = 'true',
+    ): Promise<BaseResponse<AppointmentResponseDto[]>> {
+        const data = await this.appointmentsService.getAppointments({
+            userId,
+            mentorId: userId,
+            futureOnly: futureOnly !== 'false',
+        });
+        return {
+            success: true,
+            message: `Appointments fetched for user ${userId}.`,
             data,
         };
     }

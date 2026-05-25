@@ -3,6 +3,7 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { ConfigModule } from '@nestjs/config';
 import { AppointmentsService } from './appointments.service';
 import { AppointmentsController } from './appointments.controller';
+import { AvailabilityGatewayController } from './availability-gateway.controller';
 import { Appointment, AppointmentSchema } from './schemas/appointment.schema';
 import { Availability, AvailabilitySchema } from './schemas/availability.schema';
 import { AssessmentAssigned, AssessmentAssignedSchema } from '../assessment/schemas/assessment_assigned';
@@ -25,7 +26,7 @@ import { GoogleCalendarModule } from '../google-calendar/google-calendar.module'
         ConfigModule,
         GoogleCalendarModule,
     ],
-    controllers: [AppointmentsController],
+    controllers: [AppointmentsController, AvailabilityGatewayController],
     providers: [AppointmentsService, MailerService, TranscriptSummaryService, AppointmentsCronService],
     exports: [AppointmentsService, TranscriptSummaryService],
 })

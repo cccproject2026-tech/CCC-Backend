@@ -81,6 +81,10 @@ export class User {
   @Prop()
   googleTokenExpiry?: number;
 
+  /** Google Calendar ID for CCC sync (e.g. `primary`, or a calendar email). Default `primary` when unset. */
+  @Prop()
+  googleCalendarId?: string;
+
   @Prop({ type: [String], default: [] })
   fcmTokens: string[];
 

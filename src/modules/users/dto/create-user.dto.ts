@@ -56,4 +56,8 @@ export class CreateUserDto {
 
     @IsOptional()
     googleTokenExpiry?: number;
+
+    @IsOptional()
+    @IsString()
+    googleCalendarId?: string;
 }

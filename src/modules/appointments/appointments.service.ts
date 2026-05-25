@@ -1028,10 +1028,25 @@ export class AppointmentsService {
     async update(id: string, dto: UpdateAppointmentDto): Promise<AppointmentResponseDto> {
         const { initiatorRole: _ir, ...updatePayload }: any = dto;
 
+        const existing = await this.appointmentModel.findById(id).lean().exec();
+        if (!existing) {
+            throw new NotFoundException(`Appointment with ID "${id}" not found.`);
+        }
+
+        let durationMinutes = 60;
+        const av = await this.availabilityModel
+            .findOne({ mentorId: existing.mentorId })
+            .select('meetingDuration')
+            .lean()
+            .exec();
+        if (av?.meetingDuration) {
+            durationMinutes = av.meetingDuration;
+        }
+
         if (dto.meetingDate) {
             const newMeetingDate = new Date(dto.meetingDate);
             updatePayload.meetingDate = newMeetingDate;
-            updatePayload.endTime = new Date(newMeetingDate.getTime() + 60 * 60 * 1000);
+            updatePayload.endTime = new Date(newMeetingDate.getTime() + durationMinutes * 60000);
         }
 
         const populated = await this.populateBase(
@@ -1044,6 +1059,17 @@ export class AppointmentsService {
 
         if (!populated) {
             throw new NotFoundException(`Appointment with ID "${id}" not found.`);
+        }
+
+        if (dto.meetingDate && (populated.mentorGoogleCalendarEventId || populated.userGoogleCalendarEventId)) {
+            await this.patchGoogleCalendarAfterReschedule({
+                mentorId: populated.mentorId as Types.ObjectId,
+                userId: populated.userId as Types.ObjectId,
+                mentorGoogleCalendarEventId: populated.mentorGoogleCalendarEventId,
+                userGoogleCalendarEventId: populated.userGoogleCalendarEventId,
+                meetingDate: populated.meetingDate,
+                endTime: populated.endTime,
+            });
         }
 
         if (dto.status === APPOINTMENT_STATUSES.COMPLETED) {
@@ -1515,6 +1541,67 @@ export class AppointmentsService {
             recurringHorizonDays: data.recurringHorizonDays ?? 60,
             recurringExceptionDates: data.recurringExceptionDates ?? [],
             recurringSuppressedDates: data.recurringSuppressedDates ?? [],
+        };
+    }
+
+    /**
+     * CCC mentor availability plus Google Calendar busy windows for merge on the client.
+     * `userId` path param = host/mentor Mongo id (same as `GET /appointments/availability/:mentorId`).
+     */
+    async getAvailabilityWithGoogleSummary(
+        mentorId: string,
+        opts?: { participantUserId?: string; from?: string; to?: string },
+    ) {
+        const base = await this.getMentorAvailability(mentorId);
+
+        const rangeStart = opts?.from ? new Date(opts.from) : new Date();
+        const rangeEnd = opts?.to
+            ? new Date(opts.to)
+            : new Date(rangeStart.getTime() + 21 * 24 * 60 * 60 * 1000);
+
+        if (Number.isNaN(rangeStart.getTime()) || Number.isNaN(rangeEnd.getTime())) {
+            throw new BadRequestException('Invalid from/to for Google Calendar range.');
+        }
+        if (rangeEnd.getTime() <= rangeStart.getTime()) {
+            throw new BadRequestException('Query "to" must be after "from".');
+        }
+
+        const mentorLinked = await this.googleCalendarService.hasLinkedCalendar(mentorId);
+        const mentorBusy = await this.googleCalendarService.listBusyIntervals(mentorId, rangeStart, rangeEnd);
+
+        let participant:
+            | {
+                  userId: string;
+                  googleCalendarLinked: boolean;
+                  busyIntervals: { start: string; end: string }[];
+              }
+            | undefined;
+
+        const pid = opts?.participantUserId?.trim();
+        if (pid && Types.ObjectId.isValid(pid)) {
+            participant = {
+                userId: pid,
+                googleCalendarLinked: await this.googleCalendarService.hasLinkedCalendar(pid),
+                busyIntervals: (
+                    await this.googleCalendarService.listBusyIntervals(pid, rangeStart, rangeEnd)
+                ).map((b) => ({ start: b.start.toISOString(), end: b.end.toISOString() })),
+            };
+        }
+
+        return {
+            mentorId,
+            cccAvailability: base,
+            range: { from: rangeStart.toISOString(), to: rangeEnd.toISOString() },
+            google: {
+                mentor: {
+                    googleCalendarLinked: mentorLinked,
+                    busyIntervals: mentorBusy.map((b) => ({
+                        start: b.start.toISOString(),
+                        end: b.end.toISOString(),
+                    })),
+                },
+                participant,
+            },
         };
     }
 

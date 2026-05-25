@@ -20,6 +20,8 @@ type LooseAppointment = AppointmentDocument & {
     };
     transcriptSummarySavedAt?: Date;
     transcriptSummaryModel?: string;
+    mentorGoogleCalendarEventId?: string | null;
+    userGoogleCalendarEventId?: string | null;
 };
 
 export const toAppointmentResponseDto = (
@@ -93,6 +95,9 @@ export const toAppointmentResponseDto = (
         transcriptSummary: appointment.transcriptSummary ?? undefined,
         transcriptSummarySavedAt: appointment.transcriptSummarySavedAt ?? undefined,
         transcriptSummaryModel: appointment.transcriptSummaryModel ?? undefined,
+
+        mentorGoogleCalendarEventId: appointment.mentorGoogleCalendarEventId ?? undefined,
+        userGoogleCalendarEventId: appointment.userGoogleCalendarEventId ?? undefined,
 
         user: userPopulated,
         mentor: mentorPopulated
