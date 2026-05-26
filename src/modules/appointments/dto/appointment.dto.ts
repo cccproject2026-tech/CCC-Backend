@@ -34,6 +34,15 @@ export class CreateAppointmentDto {
     @IsString()
     initiatorRole?: string;
 
+    /**
+     * If the appointment `userId` is not the person whose Google Calendar should get the second event
+     * (non-mentor party), pass that user’s Mongo id here — e.g. Director mentoring session while `userId`
+     * holds another linked record.
+     */
+    @IsOptional()
+    @IsMongoId()
+    googleCalendarNonMentorUserId?: string;
+
     @IsOptional()
     @IsBoolean()
     isSessionBooking?: boolean
