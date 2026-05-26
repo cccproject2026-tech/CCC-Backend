@@ -3,6 +3,11 @@ import { ConfigService } from '@nestjs/config';
 import { google, calendar_v3 } from 'googleapis';
 import { UsersService } from '../users/users.service';
 
+/** `extendedProperties.private` keys for CCC availability mirror events on Google Calendar. */
+export const CCC_GOOGLE_AVAIL_MARKER_HOST_KEY = 'cccAvailHost';
+export const CCC_GOOGLE_AVAIL_MARKER_KIND_KEY = 'cccAvailKind';
+export const CCC_GOOGLE_AVAIL_KIND_OPEN = 'open';
+
 export type BusyInterval = { start: Date; end: Date };
 
 /** Result from `events.insert`; distinguishes missing OAuth vs API failure (both used to recover sync issues). */
@@ -192,6 +197,151 @@ export class GoogleCalendarService {
         return !intervalOverlapsBusy(start, end, busy);
     }
 
+    /**
+     * Replace CCC “open booking” mirror blocks on the host’s Google Calendar.
+     * Mirrors are **transparent** (no FreeBusy). Real blocking still comes from normal Google events +
+     * `listBusyIntervals` when showing slots in the app.
+     */
+    async replaceOpenAvailabilityMarkers(
+        hostUserId: string,
+        hostMongoIdHex: string,
+        rangeStart: Date,
+        rangeEnd: Date,
+        windows: { start: Date; end: Date }[],
+        opts?: { maxInserts?: number },
+    ): Promise<{ deleted: number; inserted: number }> {
+        const maxInserts = opts?.maxInserts ?? 500;
+        const ctx = await this.getCalendarContext(hostUserId);
+        if (!ctx) {
+            return { deleted: 0, inserted: 0 };
+        }
+
+        const { calendar, calendarId } = ctx;
+        const propFilter = `${CCC_GOOGLE_AVAIL_MARKER_HOST_KEY}=${hostMongoIdHex}`;
+        let deleted = 0;
+
+        try {
+            let pageToken: string | undefined = undefined;
+            do {
+                const listRes = await calendar.events.list({
+                    calendarId,
+                    timeMin: rangeStart.toISOString(),
+                    timeMax: rangeEnd.toISOString(),
+                    singleEvents: true,
+                    privateExtendedProperty: [propFilter],
+                    pageToken,
+                    maxResults: 250,
+                });
+                const items = listRes.data.items ?? [];
+                const ids = items.map((e) => e.id).filter((id): id is string => !!id);
+
+                const chunkSize = 8;
+                for (let i = 0; i < ids.length; i += chunkSize) {
+                    const chunk = ids.slice(i, i + chunkSize);
+                    await Promise.all(
+                        chunk.map((eventId) =>
+                            calendar.events
+                                .delete({ calendarId, eventId })
+                                .then(() => {
+                                    deleted += 1;
+                                })
+                                .catch((delErr: unknown) => {
+                                    const m = delErr instanceof Error ? delErr.message : String(delErr);
+                                    if (!String(m).includes('404')) {
+                                        this.logger.warn(`Failed deleting CCC marker ${eventId}: ${m}`);
+                                    }
+                                }),
+                        ),
+                    );
+                }
+                pageToken = listRes.data.nextPageToken ?? undefined;
+            } while (pageToken);
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            this.logger.warn(`replaceOpenAvailabilityMarkers list/delete failed (${hostUserId}): ${msg}`);
+            return { deleted, inserted: 0 };
+        }
+
+        const seen = new Set<string>();
+        const cleaned: { start: Date; end: Date }[] = [];
+        for (const w of windows) {
+            const s = w.start.getTime();
+            const e = w.end.getTime();
+            if (!(e > s)) continue;
+            const key = `${s}-${e}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            cleaned.push({ start: w.start, end: w.end });
+        }
+        cleaned.sort((a, b) => a.start.getTime() - b.start.getTime());
+
+        let toInsert = cleaned;
+        if (toInsert.length > maxInserts) {
+            this.logger.warn(
+                `replaceOpenAvailabilityMarkers: capping inserts for ${hostUserId} (${toInsert.length} → ${maxInserts})`,
+            );
+            toInsert = cleaned.slice(0, maxInserts);
+        }
+
+        let inserted = 0;
+        const chunkIns = 4;
+        for (let i = 0; i < toInsert.length; i += chunkIns) {
+            const chunk = toInsert.slice(i, i + chunkIns);
+            await Promise.all(
+                chunk.map(async (w) => {
+                    try {
+                        const extPriv: Record<string, string> = {
+                            [CCC_GOOGLE_AVAIL_MARKER_HOST_KEY]: hostMongoIdHex,
+                            [CCC_GOOGLE_AVAIL_MARKER_KIND_KEY]: CCC_GOOGLE_AVAIL_KIND_OPEN,
+                            cccSlotStart: w.start.toISOString(),
+                            cccSlotEnd: w.end.toISOString(),
+                        };
+                        await calendar.events.insert({
+                            calendarId,
+                            sendUpdates: 'none',
+                            requestBody: {
+                                summary: '[CCC] Open — book via app',
+                                description:
+                                    'Mirror of CCC availability. External Google busy times still hide slots in the app; booking consumes the slot.',
+                                transparency: 'transparent',
+                                visibility: 'private',
+                                start: {
+                                    dateTime: w.start.toISOString(),
+                                    timeZone: 'Asia/Kolkata',
+                                },
+                                end: {
+                                    dateTime: w.end.toISOString(),
+                                    timeZone: 'Asia/Kolkata',
+                                },
+                                extendedProperties: { private: extPriv },
+                            },
+                        });
+                        inserted += 1;
+                    } catch (insErr: unknown) {
+                        const m = insErr instanceof Error ? insErr.message : String(insErr);
+                        this.logger.warn(`replaceOpenAvailabilityMarkers insert failed (${hostUserId}): ${m}`);
+                    }
+                }),
+            );
+        }
+
+        return { deleted, inserted };
+    }
+
+    /** Basic email sanity check — avoids malformed Google attendee payloads */
+    private static normalizeAttendeeEmails(raw?: string[]): { email: string }[] | undefined {
+        const out: { email: string }[] = [];
+        const seen = new Set<string>();
+        for (const e of raw ?? []) {
+            const t = String(e ?? '').trim().toLowerCase();
+            if (!t.includes('@')) continue;
+            if (seen.has(t)) continue;
+            seen.add(t);
+            out.push({ email: t });
+        }
+        return out.length > 0 ? out : undefined;
+    }
+
     async createEvent(
         userId: string,
         data: {
@@ -200,6 +350,8 @@ export class GoogleCalendarService {
             start: string;
             end: string;
             extendedPrivateProps?: Record<string, string>;
+            /** Other party emails (shown on this calendar invite; no mass email due to sendUpdates:none). */
+            attendeeEmails?: string[];
         },
     ): Promise<GoogleCalendarInsertResult> {
         const ctx = await this.getCalendarContext(userId);
@@ -210,8 +362,11 @@ export class GoogleCalendarService {
         const { calendar, calendarId } = ctx;
 
         try {
+            const attendees = GoogleCalendarService.normalizeAttendeeEmails(data.attendeeEmails);
             const res = await calendar.events.insert({
                 calendarId,
+                /** Avoid duplicate outbound invites when CCC also writes an event on the guest’s calendar. */
+                sendUpdates: 'none',
                 requestBody: {
                     summary: data.title,
                     description: data.description,
@@ -223,6 +378,7 @@ export class GoogleCalendarService {
                         dateTime: data.end,
                         timeZone: 'Asia/Kolkata',
                     },
+                    attendees,
                     extendedProperties:
                         data.extendedPrivateProps && Object.keys(data.extendedPrivateProps).length > 0
                             ? { private: data.extendedPrivateProps }

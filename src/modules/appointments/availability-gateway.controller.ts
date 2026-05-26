@@ -4,8 +4,9 @@ import { BaseResponse } from 'src/shared/interfaces/base-response.interface';
 import { ParseMongoIdPipe } from 'src/common/pipes/parse-mongo-id.pipe';
 
 /**
- * Thin REST alias for availability + Google Calendar busy data (global prefix e.g. `/api/v1`).
- * Mentors/directors still manage windows under `POST/PATCH /appointments/availability/...`.
+ * Mentor availability merged with Google **Free/Busy** (opaque `{ start, end }` only — never event titles).
+ * Omit query `participantUserId` when only the Mentor’s calendar should block slots (e.g. Director → Mentor UX).
+ * Hosts still edit weekly windows via `POST/PATCH /appointments/availability/...`.
  */
 @Controller('availability')
 export class AvailabilityGatewayController {

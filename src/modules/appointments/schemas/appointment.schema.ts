@@ -135,6 +135,13 @@ export class Appointment {
     @Prop({ type: String, default: null })
     transcriptSummaryModel?: string;
 
+    /**
+     * When set, the second Google Calendar event (`userGoogleCalendarEventId`) and FreeBusy participant
+     * use this user instead of `userId` — e.g. Director books while `userId` is another record.
+     */
+    @Prop({ type: Types.ObjectId, ref: 'User', default: null })
+    googleCalendarNonMentorUserId?: Types.ObjectId | null;
+
     @Prop({ type: String, default: null })
     mentorGoogleCalendarEventId?: string;
 
