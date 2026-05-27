@@ -2331,8 +2331,8 @@ export class AppointmentsService {
     }
 
     /**
-     * Cron hook: completes `in-progress` appointments after `endTime`, marks stale `scheduled` as missed,
-     * and clears reusable links on ended `completed` rows.
+     * Cron hook: completes `in-progress` appointments after `endTime` and marks stale `scheduled` as missed.
+     * Meeting links are intentionally preserved here; they are cleared when mentor explicitly marks a session completed.
      */
     async runPastAppointmentLifecycleCron(): Promise<void> {
         const now = new Date();
@@ -2354,11 +2354,6 @@ export class AppointmentsService {
                 { _id: { $in: ids } },
                 {
                     $set: { status: APPOINTMENT_STATUSES.COMPLETED },
-                    $unset: {
-                        meetingLink: 1,
-                        'zoomMeeting.joinUrl': 1,
-                        'zoomMeeting.startUrl': 1,
-                    },
                 },
             );
             for (const row of inProgressCompleting) {
@@ -2375,11 +2370,6 @@ export class AppointmentsService {
                 $set: {
                     status: APPOINTMENT_STATUSES.MISSED,
                 },
-                $unset: {
-                    meetingLink: 1,
-                    'zoomMeeting.joinUrl': 1,
-                    'zoomMeeting.startUrl': 1,
-                },
             },
         );
 
@@ -2388,28 +2378,9 @@ export class AppointmentsService {
             (missedRes as any)?.nModified ??
             0;
 
-        const completedRes = await this.appointmentModel.updateMany(
-            {
-                status: APPOINTMENT_STATUSES.COMPLETED,
-                endTime: { $lt: now },
-            },
-            {
-                $unset: {
-                    meetingLink: 1,
-                    'zoomMeeting.joinUrl': 1,
-                    'zoomMeeting.startUrl': 1,
-                },
-            },
-        );
-
-        const completedModified =
-            (completedRes as any)?.modifiedCount ??
-            (completedRes as any)?.nModified ??
-            0;
-
-        if (inProgressCompleting.length > 0 || missedModified > 0 || completedModified > 0) {
+        if (inProgressCompleting.length > 0 || missedModified > 0) {
             this.logger.log(
-                `Past appointments: completed(in-progress)→done ${inProgressCompleting.length}, marked missed ${missedModified}, cleared links on ended completed ${completedModified}.`,
+                `Past appointments: completed(in-progress)→done ${inProgressCompleting.length}, marked missed ${missedModified}.`,
             );
         }
     }

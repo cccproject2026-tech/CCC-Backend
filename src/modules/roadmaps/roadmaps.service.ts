@@ -2043,6 +2043,20 @@ export class RoadMapsService {
                 }
             }
         );
+
+        // Mentor explicitly marked this session complete: clear meeting links now.
+        await this.appointmentModel.updateOne(
+            { _id: new Types.ObjectId(appointmentId) },
+            {
+                $set: { status: APPOINTMENT_STATUSES.COMPLETED },
+                $unset: {
+                    meetingLink: 1,
+                    'zoomMeeting.joinUrl': 1,
+                    'zoomMeeting.startUrl': 1,
+                },
+            },
+        );
+
         const sn =
             typeof session?.data?.sessionNumber === 'number' ? session.data.sessionNumber : 0;
         if (sn >= 1 && sn < MENTORING_JOURNEY_SESSION_MAX) {
