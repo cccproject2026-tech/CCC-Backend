@@ -1,6 +1,6 @@
-import { Controller, Post, Body, Get, Param, Patch, Query, HttpCode, Headers, Logger, Req, BadRequestException, Delete, Put, Inject, forwardRef } from '@nestjs/common';
+import { Controller, Post, Body, Get, Param, Patch, Query, HttpCode, Headers, Logger, Req, BadRequestException, Delete, Put, Inject, forwardRef, UseInterceptors, UploadedFile } from '@nestjs/common';
 import { AppointmentsService } from './appointments.service';
-import { CreateAppointmentDto, AppointmentResponseDto, UpdateAppointmentDto, CancelAppointmentDto, MarkMissedAppointmentDto, RecordSessionJoinDto, TranscriptSummaryResponseDto } from './dto/appointment.dto';
+import { CreateAppointmentDto, AppointmentResponseDto, UpdateAppointmentDto, CancelAppointmentDto, MarkMissedAppointmentDto, RecordSessionJoinDto, TranscriptSummaryResponseDto, UpdateAppointmentSessionModeDto } from './dto/appointment.dto';
 import { BaseResponse } from 'src/shared/interfaces/base-response.interface';
 import { createHmac } from 'crypto';
 import { ConfigService } from '@nestjs/config';
@@ -16,6 +16,7 @@ import {
 import { ParseMongoIdPipe } from 'src/common/pipes/parse-mongo-id.pipe';
 import { MentoringSessionsService } from '../mentoring-sessions/mentoring-sessions.service';
 import { PastorRescheduleRequestDto } from '../mentoring-sessions/dto/mentoring-sessions.dto';
+import { FileInterceptor } from '@nestjs/platform-express';
 
 @Controller('appointments')
 export class AppointmentsController {
@@ -336,6 +337,33 @@ export class AppointmentsController {
         return {
             success: true,
             message: 'Appointment marked as missed.',
+            data,
+        };
+    }
+
+    @Patch(':id/session-mode')
+    async updateSessionMode(
+        @Param('id') id: string,
+        @Body() body: UpdateAppointmentSessionModeDto,
+    ): Promise<BaseResponse<AppointmentResponseDto>> {
+        const data = await this.appointmentsService.updateSessionMode(id, body.sessionMode);
+        return {
+            success: true,
+            message: 'Session mode updated successfully.',
+            data,
+        };
+    }
+
+    @Post(':id/recording')
+    @UseInterceptors(FileInterceptor('audio'))
+    async uploadSessionRecording(
+        @Param('id') id: string,
+        @UploadedFile() file: Express.Multer.File,
+    ): Promise<BaseResponse<AppointmentResponseDto>> {
+        const data = await this.appointmentsService.uploadInPersonRecording(id, file);
+        return {
+            success: true,
+            message: 'Session recording processed successfully.',
             data,
         };
     }

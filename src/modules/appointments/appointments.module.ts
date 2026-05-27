@@ -10,10 +10,11 @@ import { AssessmentAssigned, AssessmentAssignedSchema } from '../assessment/sche
 import { HomeModule } from '../home/home.module';
 import { ZoomModule } from '../zoom/zoom.module';
 import { MailerService } from '../../common/utils/mail.util';
-import { TranscriptSummaryService } from './transcript-summary.service';
 import { AppointmentsCronService } from './appointments.cron';
 import { GoogleCalendarModule } from '../google-calendar/google-calendar.module';
 import { MentoringSessionsModule } from '../mentoring-sessions/mentoring-sessions.module';
+import { S3Module } from '../s3/s3.module';
+import { ConversationProcessingModule } from '../conversation-processing/conversation-processing.module';
 
 @Module({
     imports: [
@@ -24,12 +25,14 @@ import { MentoringSessionsModule } from '../mentoring-sessions/mentoring-session
         ]),
         HomeModule,
         ZoomModule,
+        S3Module,
         ConfigModule,
         GoogleCalendarModule,
+        ConversationProcessingModule,
         forwardRef(() => MentoringSessionsModule),
     ],
     controllers: [AppointmentsController, AvailabilityGatewayController],
-    providers: [AppointmentsService, MailerService, TranscriptSummaryService, AppointmentsCronService],
-    exports: [AppointmentsService, TranscriptSummaryService],
+    providers: [AppointmentsService, MailerService, AppointmentsCronService],
+    exports: [AppointmentsService],
 })
 export class AppointmentsModule { }

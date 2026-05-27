@@ -1,6 +1,11 @@
 import { IsDateString, IsEnum, IsMongoId, IsOptional, IsString, IsNotEmpty, IsBoolean, IsIn } from 'class-validator';
 import { PartialType, OmitType } from '@nestjs/mapped-types';
-import { VALID_APPOINTMENT_PLATFORMS, VALID_APPOINTMENT_STATUSES } from '../../../common/constants/status.constants';
+import {
+    VALID_APPOINTMENT_PLATFORMS,
+    VALID_APPOINTMENT_STATUSES,
+    VALID_RECORDING_STATUSES,
+    VALID_SESSION_MODES,
+} from '../../../common/constants/status.constants';
 
 export class CreateAppointmentDto {
     @IsMongoId()
@@ -27,6 +32,14 @@ export class CreateAppointmentDto {
     meetingLink?: string;
 
     @IsOptional()
+    @IsEnum(VALID_SESSION_MODES)
+    sessionMode?: string;
+
+    @IsOptional()
+    @IsString()
+    meetingLocation?: string;
+
+    @IsOptional()
     @IsString()
     notes?: string;
 
@@ -49,7 +62,7 @@ export class CreateAppointmentDto {
 }
 
 export class UpdateAppointmentDto extends PartialType(
-    OmitType(CreateAppointmentDto, ['userId', 'mentorId'] as const)
+    OmitType(CreateAppointmentDto, ['userId', 'mentorId', 'sessionMode'] as const)
 ) {
     @IsOptional()
     @IsEnum(VALID_APPOINTMENT_STATUSES)
@@ -105,7 +118,11 @@ export class AppointmentResponseDto {
     endTime: Date;
 
     platform: string;
+    sessionMode?: string;
     meetingLink?: string;
+    meetingLocation?: string | null;
+    recordingUrl?: string | null;
+    recordingStatus?: string;
     notes?: string;
     status: string;
 
@@ -147,6 +164,20 @@ export class TranscriptSummaryResponseDto {
 
 export class CancelAppointmentDto {
     readonly reason?: string;
+}
+
+export class UpdateAppointmentSessionModeDto {
+    @IsEnum(VALID_SESSION_MODES)
+    @IsNotEmpty()
+    sessionMode: string;
+}
+
+export class UploadAppointmentRecordingResponseDto {
+    appointmentId: string;
+    recordingUrl: string;
+    recordingStatus: string;
+    transcriptSavedAt?: Date;
+    transcriptSummarySavedAt?: Date;
 }
 
 /** Mentor/director marks a scheduled session as a no-show; join links are cleared (same as automatic missed processing). */

@@ -1,6 +1,15 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, Types } from 'mongoose';
-import { VALID_APPOINTMENT_STATUSES, VALID_APPOINTMENT_PLATFORMS, APPOINTMENT_STATUSES, APPOINTMENT_PLATFORMS } from '../../../common/constants/status.constants';
+import {
+    VALID_APPOINTMENT_STATUSES,
+    VALID_APPOINTMENT_PLATFORMS,
+    APPOINTMENT_STATUSES,
+    APPOINTMENT_PLATFORMS,
+    VALID_SESSION_MODES,
+    SESSION_MODES,
+    VALID_RECORDING_STATUSES,
+    RECORDING_STATUSES,
+} from '../../../common/constants/status.constants';
 
 export type AppointmentDocument = Document<unknown, {}, Appointment> & Appointment & {
     _id: Types.ObjectId;
@@ -55,6 +64,29 @@ export class Appointment {
 
     @Prop()
     meetingLink?: string;
+
+    @Prop({
+        type: String,
+        enum: VALID_SESSION_MODES,
+        default: SESSION_MODES.ONLINE,
+        required: true,
+        index: true,
+    })
+    sessionMode: string;
+
+    @Prop({ type: String, default: null })
+    recordingUrl?: string | null;
+
+    @Prop({
+        type: String,
+        enum: VALID_RECORDING_STATUSES,
+        default: RECORDING_STATUSES.NOT_STARTED,
+        required: true,
+    })
+    recordingStatus: string;
+
+    @Prop({ type: String, default: null })
+    meetingLocation?: string | null;
 
     @Prop()
     notes?: string;

@@ -67,6 +67,32 @@ export const APPOINTMENT_PLATFORMS = {
   OTHER: 'other',
 } as const;
 
+export const SESSION_MODES = {
+  ONLINE: 'ONLINE',
+  IN_PERSON: 'IN_PERSON',
+  NOT_DECIDED: 'NOT_DECIDED',
+} as const;
+
+export const VALID_SESSION_MODES = [
+  SESSION_MODES.ONLINE,
+  SESSION_MODES.IN_PERSON,
+  SESSION_MODES.NOT_DECIDED,
+] as const;
+
+export const RECORDING_STATUSES = {
+  NOT_STARTED: 'NOT_STARTED',
+  PROCESSING: 'PROCESSING',
+  COMPLETED: 'COMPLETED',
+  FAILED: 'FAILED',
+} as const;
+
+export const VALID_RECORDING_STATUSES = [
+  RECORDING_STATUSES.NOT_STARTED,
+  RECORDING_STATUSES.PROCESSING,
+  RECORDING_STATUSES.COMPLETED,
+  RECORDING_STATUSES.FAILED,
+] as const;
+
 export const VALID_APPOINTMENT_PLATFORMS = [
   APPOINTMENT_PLATFORMS.GMEET,
   APPOINTMENT_PLATFORMS.ZOOM,
@@ -199,6 +225,8 @@ export type ScholarshipType = (typeof VALID_SCHOLARSHIP_TYPES)[number];
 export type ScholarshipStatus = (typeof VALID_SCHOLARSHIP_STATUSES)[number];
 export type AppointmentStatus = (typeof VALID_APPOINTMENT_STATUSES)[number];
 export type AppointmentPlatform = (typeof VALID_APPOINTMENT_PLATFORMS)[number];
+export type SessionMode = (typeof VALID_SESSION_MODES)[number];
+export type RecordingStatus = (typeof VALID_RECORDING_STATUSES)[number];
 export type QueryStatus = (typeof VALID_QUERY_STATUSES)[number];
 export type UserRole = (typeof VALID_USER_ROLES)[number];
 export type OtpPurpose = (typeof VALID_OTP_PURPOSES)[number];

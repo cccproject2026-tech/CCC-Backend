@@ -5,7 +5,14 @@ import { ConfigService } from '@nestjs/config';
 import { Appointment, AppointmentDocument } from './schemas/appointment.schema';
 import { CreateAppointmentDto, AppointmentResponseDto, TranscriptSummaryResponseDto, UpdateAppointmentDto, RecordSessionJoinDto } from './dto/appointment.dto';
 import { toAppointmentResponseDto } from './utils/appointment.mapper';
-import { APPOINTMENT_STATUSES, APPOINTMENT_PLATFORMS, ASSESSMENT_ASSIGNMENT_STATUSES, USER_STATUSES } from '../../common/constants/status.constants';
+import {
+    APPOINTMENT_STATUSES,
+    APPOINTMENT_PLATFORMS,
+    ASSESSMENT_ASSIGNMENT_STATUSES,
+    USER_STATUSES,
+    SESSION_MODES,
+    RECORDING_STATUSES,
+} from '../../common/constants/status.constants';
 import { Availability, AvailabilityDocument, DayAvailability } from './schemas/availability.schema';
 import {
     AvailabilityDto,
@@ -32,7 +39,6 @@ import { HomeService } from '../home/home.service';
 import { ROLES, isHostRole } from 'src/common/constants/roles.constants';
 import { ZoomService } from '../zoom/zoom.service';
 import { MailerService } from '../../common/utils/mail.util';
-import { TranscriptSummaryService } from './transcript-summary.service';
 import { AssessmentAssigned, AssessmentAssignedDocument } from '../assessment/schemas/assessment_assigned';
 import {
     GoogleCalendarService,
@@ -40,6 +46,14 @@ import {
     intervalOverlapsBusy,
 } from '../google-calendar/google-calendar.service';
 import { formatMeetingDateForNotification } from '../../common/utils/notification-copy.util';
+import { TranscriptSummaryService } from './transcript-summary.service';
+import { S3Service } from '../s3/s3.service';
+import { ConversationProcessingService } from '../conversation-processing/conversation-processing.service';
+import {
+    isAllowedAudioUpload,
+    normalizeMimeType,
+    resolveAudioExtension,
+} from '../voice-notes/voice-note-audio.constants';
 @Injectable()
 export class AppointmentsService {
     private readonly logger = new Logger(AppointmentsService.name);
@@ -53,6 +67,8 @@ export class AppointmentsService {
         private readonly zoomService: ZoomService,
         private readonly mailerService: MailerService,
         private readonly transcriptSummaryService: TranscriptSummaryService,
+        private readonly conversationProcessingService: ConversationProcessingService,
+        private readonly s3Service: S3Service,
         private readonly googleCalendarService: GoogleCalendarService,
     ) { }
 
@@ -62,6 +78,16 @@ export class AppointmentsService {
     /** Appointment rows that still block mentor availability overlap & per-day caps. */
     private slotOccupyingStatuses(): readonly string[] {
         return [APPOINTMENT_STATUSES.SCHEDULED, APPOINTMENT_STATUSES.IN_PROGRESS];
+    }
+
+    private normalizeSessionMode(sessionMode?: string): string {
+        if (sessionMode === SESSION_MODES.IN_PERSON) return SESSION_MODES.IN_PERSON;
+        if (sessionMode === SESSION_MODES.NOT_DECIDED) return SESSION_MODES.NOT_DECIDED;
+        return SESSION_MODES.ONLINE;
+    }
+
+    private canMutateSessionMode(status: string): boolean {
+        return status !== APPOINTMENT_STATUSES.COMPLETED && status !== APPOINTMENT_STATUSES.CANCELED;
     }
 
     private populateBase(query: any) {
@@ -866,11 +892,14 @@ export class AppointmentsService {
         const userName = userDoc ? `${userDoc.firstName || ''} ${userDoc.lastName || ''}`.trim() : 'Student';
         const mentorName = mentorDoc ? `${mentorDoc.firstName || ''} ${mentorDoc.lastName || ''}`.trim() : 'Mentor';
         const normalizedNotes = linkedAssessmentAssignmentId ? 'Assessment meeting' : dto.notes;
+        // Mode-aware creation keeps legacy ONLINE behavior while skipping Zoom for non-online.
+        const sessionMode = this.normalizeSessionMode(dto.sessionMode);
+        const shouldGenerateZoom = sessionMode === SESSION_MODES.ONLINE;
 
         let zoomMeeting: any = null;
-        let meetingLink = dto.meetingLink || null;
+        let meetingLink = shouldGenerateZoom ? (dto.meetingLink || null) : null;
 
-        if (this.zoomService.isConfigured()) {
+        if (shouldGenerateZoom && this.zoomService.isConfigured()) {
             try {
                 this.logger.log(`Creating Zoom meeting for appointment: ${userName} with ${mentorName}`);
 
@@ -916,7 +945,7 @@ export class AppointmentsService {
                 this.logger.error(`Failed to create Zoom meeting: ${error.message}`);
                 // Continue without Zoom meeting - don't fail the appointment creation
             }
-        } else {
+        } else if (shouldGenerateZoom) {
             this.logger.warn('Zoom is not configured. Creating appointment without Zoom meeting.');
         }
 
@@ -938,7 +967,13 @@ export class AppointmentsService {
                       googleCalendarNonMentorUserId: new Types.ObjectId(dto.googleCalendarNonMentorUserId),
                   }
                 : {}),
-            platform: APPOINTMENT_PLATFORMS.ZOOM,
+            platform:
+                sessionMode === SESSION_MODES.IN_PERSON
+                    ? APPOINTMENT_PLATFORMS.IN_PERSON
+                    : APPOINTMENT_PLATFORMS.ZOOM,
+            sessionMode,
+            recordingStatus: RECORDING_STATUSES.NOT_STARTED,
+            meetingLocation: dto.meetingLocation?.trim() || null,
             meetingLink,
             zoomMeetingId: zoomMeeting?.meetingId || null,
             zoomMeeting,
@@ -1233,6 +1268,209 @@ export class AppointmentsService {
             model,
             cached: false,
         };
+    }
+
+    private async ensureOnlineZoomMeetingForAppointment(appointment: any): Promise<{
+        zoomMeetingId: string | null;
+        zoomMeeting: any;
+        meetingLink: string | null;
+    }> {
+        if (appointment.zoomMeetingId && appointment.zoomMeeting?.joinUrl) {
+            return {
+                zoomMeetingId: appointment.zoomMeetingId,
+                zoomMeeting: appointment.zoomMeeting,
+                meetingLink: appointment.zoomMeeting.joinUrl ?? appointment.meetingLink ?? null,
+            };
+        }
+
+        if (!this.zoomService.isConfigured()) {
+            return {
+                zoomMeetingId: appointment.zoomMeetingId ?? null,
+                zoomMeeting: appointment.zoomMeeting ?? null,
+                meetingLink: appointment.meetingLink ?? null,
+            };
+        }
+
+        const [userDoc, mentorDoc, availability] = await Promise.all([
+            this.appointmentModel.db.model('User').findById(appointment.userId).lean(),
+            this.appointmentModel.db.model('User').findById(appointment.mentorId).lean(),
+            this.availabilityModel.findOne({ mentorId: appointment.mentorId }).select('meetingDuration').lean(),
+        ]) as any[];
+
+        const durationMinutes = availability?.meetingDuration || 60;
+        const userName = userDoc ? `${userDoc.firstName || ''} ${userDoc.lastName || ''}`.trim() : 'Student';
+        const mentorName = mentorDoc ? `${mentorDoc.firstName || ''} ${mentorDoc.lastName || ''}`.trim() : 'Mentor';
+
+        let mentorZoomUserId: string | undefined = mentorDoc?.zoomUserId || undefined;
+        if (!mentorZoomUserId && mentorDoc?.email) {
+            const fetchedId = await this.zoomService.getUserIdByEmail(mentorDoc.email);
+            if (fetchedId) {
+                mentorZoomUserId = fetchedId;
+                this.appointmentModel.db.model('User')
+                    .updateOne({ _id: mentorDoc._id }, { $set: { zoomUserId: fetchedId } })
+                    .exec()
+                    .catch((err: any) =>
+                        this.logger.warn(`Failed to cache zoomUserId for mentor ${mentorDoc._id}: ${err?.message}`),
+                    );
+            }
+        }
+
+        const zoomResponse = await this.zoomService.createMeeting({
+            topic: `Mentoring Session: ${userName} with ${mentorName}`,
+            startTime: new Date(appointment.meetingDate).toISOString(),
+            duration: durationMinutes,
+            timezone: 'Asia/Kolkata',
+            agenda:
+                appointment.notes || `Scheduled mentoring session between ${userName} and ${mentorName}`,
+            hostUserId: mentorZoomUserId,
+        });
+
+        const zoomMeeting = {
+            meetingId: zoomResponse.meetingId,
+            joinUrl: zoomResponse.joinUrl,
+            startUrl: zoomResponse.startUrl,
+            password: zoomResponse.password,
+            hostEmail: zoomResponse.hostEmail,
+            hostId: zoomResponse.hostId,
+            topic: zoomResponse.topic,
+            duration: zoomResponse.duration,
+            timezone: zoomResponse.timezone,
+            createdAt: zoomResponse.createdAt,
+        };
+
+        return {
+            zoomMeetingId: zoomResponse.meetingId ?? null,
+            zoomMeeting,
+            meetingLink: zoomResponse.joinUrl ?? appointment.meetingLink ?? null,
+        };
+    }
+
+    async updateSessionMode(appointmentId: string, requestedMode: string): Promise<AppointmentResponseDto> {
+        const appointment = await this.appointmentModel.findById(appointmentId).lean() as any;
+        if (!appointment) {
+            throw new NotFoundException('Appointment not found.');
+        }
+
+        if (!this.canMutateSessionMode(String(appointment.status))) {
+            throw new BadRequestException(
+                `Session mode cannot be changed while appointment status is "${appointment.status}".`,
+            );
+        }
+
+        const sessionMode = this.normalizeSessionMode(requestedMode);
+        const setDoc: Record<string, unknown> = {
+            sessionMode,
+        };
+
+        if (sessionMode === SESSION_MODES.ONLINE) {
+            const zoomPayload = await this.ensureOnlineZoomMeetingForAppointment(appointment);
+            setDoc.platform = APPOINTMENT_PLATFORMS.ZOOM;
+            setDoc.zoomMeetingId = zoomPayload.zoomMeetingId;
+            setDoc.zoomMeeting = zoomPayload.zoomMeeting;
+            setDoc.meetingLink = zoomPayload.meetingLink;
+        } else if (sessionMode === SESSION_MODES.IN_PERSON) {
+            setDoc.platform = APPOINTMENT_PLATFORMS.IN_PERSON;
+        }
+
+        const updated = await this.populateBase(
+            this.appointmentModel.findByIdAndUpdate(
+                appointment._id,
+                { $set: setDoc },
+                { new: true },
+            ),
+        ).lean().exec();
+
+        if (!updated) {
+            throw new NotFoundException('Appointment not found.');
+        }
+
+        return toAppointmentResponseDto(updated as AppointmentDocument);
+    }
+
+    async uploadInPersonRecording(
+        appointmentId: string,
+        file: Express.Multer.File | undefined,
+    ): Promise<AppointmentResponseDto> {
+        if (!file) {
+            throw new BadRequestException('Audio file is required');
+        }
+
+        if (!isAllowedAudioUpload(file.mimetype, file.originalname)) {
+            throw new BadRequestException(
+                'Invalid audio format. Allowed: MP3, WAV, M4A, WebM, OGG, Opus, MP4, 3GP, and common mobile recordings',
+            );
+        }
+
+        const appointment = await this.appointmentModel.findById(appointmentId).lean() as any;
+        if (!appointment) {
+            throw new NotFoundException('Appointment not found.');
+        }
+
+        if (appointment.sessionMode === SESSION_MODES.NOT_DECIDED) {
+            throw new BadRequestException('Select ONLINE or IN_PERSON before uploading a recording.');
+        }
+
+        if (appointment.sessionMode !== SESSION_MODES.IN_PERSON) {
+            throw new BadRequestException('Recording upload is supported only for IN_PERSON sessions.');
+        }
+
+        const extension = resolveAudioExtension(file.mimetype, file.originalname);
+        const normalizedMime = normalizeMimeType(file.mimetype) || file.mimetype;
+        const timestamp = Date.now();
+        const s3Key = `appointments/${appointment._id.toString()}/recordings/${timestamp}.${extension}`;
+
+        const recordingUrl = await this.s3Service.uploadFile(s3Key, file.buffer, normalizedMime);
+
+        await this.appointmentModel.updateOne(
+            { _id: appointment._id },
+            {
+                $set: {
+                    recordingUrl,
+                    recordingStatus: RECORDING_STATUSES.PROCESSING,
+                },
+            },
+        );
+
+        try {
+            // Reuse shared conversation pipeline (Whisper + summary model), no duplicated AI logic.
+            const processed = await this.conversationProcessingService.processAudio({
+                audioBuffer: file.buffer,
+                mimeType: normalizedMime,
+                originalFilename: file.originalname,
+            });
+
+            await this.appointmentModel.updateOne(
+                { _id: appointment._id },
+                {
+                    $set: {
+                        transcript: processed.transcript,
+                        transcriptSavedAt: new Date(),
+                        transcriptSummary: processed.summary,
+                        transcriptSummarySavedAt: new Date(),
+                        transcriptSummaryModel: processed.model,
+                        recordingStatus: RECORDING_STATUSES.COMPLETED,
+                    },
+                },
+            );
+        } catch (error) {
+            await this.appointmentModel.updateOne(
+                { _id: appointment._id },
+                {
+                    $set: {
+                        recordingStatus: RECORDING_STATUSES.FAILED,
+                    },
+                },
+            );
+            throw error;
+        }
+
+        const updated = await this.populateBase(this.appointmentModel.findById(appointment._id))
+            .lean()
+            .exec();
+        if (!updated) {
+            throw new NotFoundException('Appointment not found.');
+        }
+        return toAppointmentResponseDto(updated as AppointmentDocument);
     }
 
     async update(id: string, dto: UpdateAppointmentDto): Promise<AppointmentResponseDto> {

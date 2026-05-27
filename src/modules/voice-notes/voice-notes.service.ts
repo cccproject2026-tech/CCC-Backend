@@ -7,9 +7,7 @@ import {
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { S3Service } from '../s3/s3.service';
-import { TranscriptSummaryService } from '../appointments/transcript-summary.service';
 import { VoiceNote, VoiceNoteDocument } from './schemas/voice-note.schema';
-import { WhisperTranscriptionService } from './whisper-transcription.service';
 import {
     VoiceNoteDetailResponseDto,
     VoiceNoteListItemDto,
@@ -26,6 +24,7 @@ import {
     normalizeMimeType,
     resolveAudioExtension,
 } from './voice-note-audio.constants';
+import { ConversationProcessingService } from '../conversation-processing/conversation-processing.service';
 
 const MAX_AUDIO_SIZE_BYTES = 25 * 1024 * 1024;
 
@@ -37,8 +36,7 @@ export class VoiceNotesService {
         @InjectModel(VoiceNote.name)
         private readonly voiceNoteModel: Model<VoiceNoteDocument>,
         private readonly s3Service: S3Service,
-        private readonly whisperTranscriptionService: WhisperTranscriptionService,
-        private readonly transcriptSummaryService: TranscriptSummaryService,
+        private readonly conversationProcessingService: ConversationProcessingService,
     ) { }
 
     async upload(
@@ -126,11 +124,11 @@ export class VoiceNotesService {
         try {
             await this.updateStatus(noteId, 'transcribing');
 
-            const transcript = await this.whisperTranscriptionService.transcribeAudio(
+            const transcript = await this.conversationProcessingService.transcribeAudio({
                 audioBuffer,
-                note.audioMimeType,
-                `audio.${resolveAudioExtension(note.audioMimeType)}`,
-            );
+                mimeType: note.audioMimeType,
+                originalFilename: `audio.${resolveAudioExtension(note.audioMimeType)}`,
+            });
             const transcriptSavedAt = new Date();
 
             await this.voiceNoteModel.updateOne(
@@ -146,9 +144,9 @@ export class VoiceNotesService {
 
             await this.updateStatus(noteId, 'summarizing');
 
-            const summary = await this.transcriptSummaryService.summarizeTranscript(transcript);
+            const summary = await this.conversationProcessingService.summarizeTranscript(transcript);
             const summarySavedAt = new Date();
-            const model = this.transcriptSummaryService.modelName;
+            const model = this.conversationProcessingService.getSummaryModelName();
 
             await this.voiceNoteModel.updateOne(
                 { _id: note._id },

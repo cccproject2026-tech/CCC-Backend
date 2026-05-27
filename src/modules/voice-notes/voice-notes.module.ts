@@ -4,10 +4,9 @@ import { MulterModule } from '@nestjs/platform-express';
 import { ConfigModule } from '@nestjs/config';
 import { VoiceNotesController } from './voice-notes.controller';
 import { VoiceNotesService } from './voice-notes.service';
-import { WhisperTranscriptionService } from './whisper-transcription.service';
 import { VoiceNote, VoiceNoteSchema } from './schemas/voice-note.schema';
 import { S3Module } from '../s3/s3.module';
-import { AppointmentsModule } from '../appointments/appointments.module';
+import { ConversationProcessingModule } from '../conversation-processing/conversation-processing.module';
 
 @Module({
     imports: [
@@ -15,13 +14,13 @@ import { AppointmentsModule } from '../appointments/appointments.module';
             { name: VoiceNote.name, schema: VoiceNoteSchema },
         ]),
         S3Module,
-        AppointmentsModule,
+        ConversationProcessingModule,
         ConfigModule,
         MulterModule.register({
             storage: require('multer').memoryStorage(),
         }),
     ],
     controllers: [VoiceNotesController],
-    providers: [VoiceNotesService, WhisperTranscriptionService],
+    providers: [VoiceNotesService],
 })
 export class VoiceNotesModule { }

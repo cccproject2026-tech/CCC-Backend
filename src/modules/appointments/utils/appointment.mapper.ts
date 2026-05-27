@@ -23,6 +23,10 @@ type LooseAppointment = AppointmentDocument & {
     transcriptSummaryModel?: string;
     mentorGoogleCalendarEventId?: string | null;
     userGoogleCalendarEventId?: string | null;
+    sessionMode?: string;
+    recordingUrl?: string | null;
+    recordingStatus?: string;
+    meetingLocation?: string | null;
     hostJoinedAt?: Date | null;
     joinAudit?: Array<{ at: Date; userId: Types.ObjectId | string; kind: string }>;
 };
@@ -73,7 +77,11 @@ export const toAppointmentResponseDto = (
         endTime: appointment.endTime,
 
         platform: appointment.platform,
+        sessionMode: appointment.sessionMode ?? undefined,
         meetingLink: appointment.meetingLink,
+        meetingLocation: appointment.meetingLocation ?? undefined,
+        recordingUrl: appointment.recordingUrl ?? undefined,
+        recordingStatus: appointment.recordingStatus ?? undefined,
         status: appointment.status,
         notes: appointment.notes,
 
