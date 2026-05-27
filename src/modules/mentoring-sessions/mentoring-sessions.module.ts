@@ -21,7 +21,9 @@ import { HomeModule } from '../home/home.module';
             { name: User.name, schema: UserSchema },
             { name: MentoringRescheduleRequest.name, schema: MentoringRescheduleRequestSchema },
         ]),
-        RoadMapsModule,
+        // Avoid circular-load issues:
+        // MentoringSessionsModule -> RoadMapsModule -> AppointmentsModule -> MentoringSessionsModule
+        forwardRef(() => RoadMapsModule),
         forwardRef(() => AppointmentsModule),
         HomeModule,
     ],
