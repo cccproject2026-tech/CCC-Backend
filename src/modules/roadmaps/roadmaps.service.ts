@@ -93,6 +93,28 @@ export class RoadMapsService {
         return r === ROLES.MENTOR || r === ROLES.FIELD_MENTOR;
     }
 
+    /**
+     * Creates a mentoring appointment via AppointmentsService so Zoom link generation
+     * and related side-effects are consistently applied for session flows too.
+     */
+    private async createMentoringSessionAppointment(
+        userId: Types.ObjectId,
+        mentorId: Types.ObjectId,
+        meetingDate: Date,
+        notes: string,
+    ): Promise<{ id: string }> {
+        const created = await this.appointmentService.create({
+            userId: userId.toString(),
+            mentorId: mentorId.toString(),
+            meetingDate: meetingDate.toISOString(),
+            platform: APPOINTMENT_PLATFORMS.ZOOM,
+            notes,
+            initiatorRole: 'director',
+            isSessionBooking: true,
+        });
+        return { id: created.id };
+    }
+
     async create(dto: CreateRoadMapDto, image?: Express.Multer.File): Promise<RoadMapResponseDto> {
         const existing = await this.roadMapModel.findOne({ name: dto.name }).lean().exec();
         if (existing) {
@@ -1527,16 +1549,13 @@ export class RoadMapsService {
                         : null;
 
                 if (!existingLean) {
-                    const createdMissing = await this.appointmentModel.create({
-                        userId: pastorOid,
-                        mentorId: mentorOid,
-                        meetingDate: anchor,
-                        endTime,
-                        platform: APPOINTMENT_PLATFORMS.ZOOM,
-                        status: appointmentStatus,
-                        notes: 'Mentoring Session 1 anchored to Jumpstart completion.',
-                    });
-                    located.dataRef.appointmentId = createdMissing._id.toString();
+                    const createdMissing = await this.createMentoringSessionAppointment(
+                        pastorOid,
+                        mentorOid,
+                        anchor,
+                        'Mentoring Session 1 anchored to Jumpstart completion.',
+                    );
+                    located.dataRef.appointmentId = createdMissing.id;
                     located.dataRef.originalDate = anchor;
                     located.dataRef.scheduledDate = anchor;
                     located.dataRef.status = appointmentStatus;
@@ -1607,16 +1626,13 @@ export class RoadMapsService {
                         },
                     );
                 } else {
-                    const createdMissing = await this.appointmentModel.create({
-                        userId: pastorOid,
-                        mentorId: mentorOid,
-                        meetingDate: anchor,
-                        endTime,
-                        platform: APPOINTMENT_PLATFORMS.ZOOM,
-                        status: appointmentStatus,
-                        notes: 'Mentoring Session 1 anchored to Jumpstart completion.',
-                    });
-                    apptStr = createdMissing._id.toString();
+                    const createdMissing = await this.createMentoringSessionAppointment(
+                        pastorOid,
+                        mentorOid,
+                        anchor,
+                        'Mentoring Session 1 anchored to Jumpstart completion.',
+                    );
+                    apptStr = createdMissing.id;
                     located.dataRef.appointmentId = apptStr;
                 }
 
@@ -1633,15 +1649,12 @@ export class RoadMapsService {
                 return;
             }
 
-            const created = await this.appointmentModel.create({
-                userId: pastorOid,
-                mentorId: mentorOid,
-                meetingDate: anchor,
-                endTime,
-                platform: APPOINTMENT_PLATFORMS.ZOOM,
-                status: appointmentStatus,
-                notes: 'Mentoring Session 1 anchored to Jumpstart completion.',
-            });
+            const created = await this.createMentoringSessionAppointment(
+                pastorOid,
+                mentorOid,
+                anchor,
+                'Mentoring Session 1 anchored to Jumpstart completion.',
+            );
 
             let extrasDoc = await this.extrasModel.findOne(extrasQuery).exec();
             if (!extrasDoc) {
@@ -1658,7 +1671,7 @@ export class RoadMapsService {
                 data: {
                     sessionNumber: 1,
                     title: 'Session 1',
-                    appointmentId: created._id.toString(),
+                    appointmentId: created.id,
                     originalDate: anchor,
                     scheduledDate: anchor,
                     isCompleted: false,
@@ -2166,7 +2179,41 @@ export class RoadMapsService {
                 }))
         );
 
-        return sessions.sort((a, b) => a.sessionNumber - b.sessionNumber);
+        const appointmentIds = Array.from(
+            new Set(
+                sessions
+                    .map((s) => s.appointmentId)
+                    .filter((id): id is string => typeof id === 'string' && Types.ObjectId.isValid(id)),
+            ),
+        );
+
+        const appointments = appointmentIds.length
+            ? await this.appointmentModel
+                  .find({ _id: { $in: appointmentIds.map((id) => new Types.ObjectId(id)) } })
+                  .select('meetingLink zoomMeeting')
+                  .lean()
+                  .exec()
+            : [];
+
+        const appointmentById = new Map(
+            appointments.map((a: any) => [String(a._id), a]),
+        );
+
+        return sessions
+            .map((s) => {
+                const appt = appointmentById.get(String(s.appointmentId));
+                const meetingLink =
+                    (typeof appt?.meetingLink === 'string' && appt.meetingLink.trim()) ||
+                    (typeof appt?.zoomMeeting?.joinUrl === 'string' && appt.zoomMeeting.joinUrl.trim()) ||
+                    undefined;
+
+                return {
+                    ...s,
+                    ...(meetingLink ? { meetingLink } : {}),
+                    ...(appt ? { appointment: appt } : {}),
+                };
+            })
+            .sort((a, b) => a.sessionNumber - b.sessionNumber);
     }
 
     async getResubmittedExtrasForMentor(mentorId: string): Promise<ExtrasResponseDto[]> {
