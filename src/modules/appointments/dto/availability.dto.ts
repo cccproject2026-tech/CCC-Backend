@@ -1,6 +1,7 @@
 import { ArrayMinSize, IsArray, IsBoolean, IsDateString, IsEnum, IsIn, IsInt, IsMongoId, IsNumber, IsOptional, IsString, Matches, Max, Min, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 import { VALID_APPOINTMENT_PLATFORMS } from 'src/common/constants/status.constants';
+import { CCC_ALLOWED_MEETING_DURATION_MINUTES } from '../booking-rules.constants';
 
 const SLOT_TIME_REGEX = /^(0?[1-9]|1[0-2]):00$/;
 
@@ -41,7 +42,11 @@ export class AvailabilityDto {
     weeklySlots!: DayAvailabilityDto[];
 
     @IsOptional()
-    @IsNumber()
+    @Type(() => Number)
+    @IsInt()
+    @IsIn([...CCC_ALLOWED_MEETING_DURATION_MINUTES], {
+        message: 'meetingDuration must be one of the allowed durations (currently 30 or 60 minutes).',
+    })
     meetingDuration?: number;
 
     @IsOptional()
@@ -111,7 +116,11 @@ export class CreateRecurringAvailabilityDto {
     clearPersonalizations?: boolean;
 
     @IsOptional()
-    @IsNumber()
+    @Type(() => Number)
+    @IsInt()
+    @IsIn([...CCC_ALLOWED_MEETING_DURATION_MINUTES], {
+        message: 'meetingDuration must be one of the allowed durations (currently 30 or 60 minutes).',
+    })
     meetingDuration?: number;
 
     @IsOptional()
@@ -139,7 +148,11 @@ export class UpsertSingleDayAvailabilityDto {
     slots!: TimeSlotDto[];
 
     @IsOptional()
-    @IsNumber()
+    @Type(() => Number)
+    @IsInt()
+    @IsIn([...CCC_ALLOWED_MEETING_DURATION_MINUTES], {
+        message: 'meetingDuration must be one of the allowed durations (currently 30 or 60 minutes).',
+    })
     meetingDuration?: number;
 
     @IsOptional()
@@ -160,8 +173,9 @@ export class UpdateMentorAvailabilitySettingsDto {
     @IsOptional()
     @Type(() => Number)
     @IsInt()
-    @Min(15)
-    @Max(480)
+    @IsIn([...CCC_ALLOWED_MEETING_DURATION_MINUTES], {
+        message: 'meetingDuration must be one of the allowed durations (currently 30 or 60 minutes).',
+    })
     meetingDuration?: number;
 
     @IsOptional()

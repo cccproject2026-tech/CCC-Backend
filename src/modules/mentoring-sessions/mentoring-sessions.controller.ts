@@ -58,6 +58,10 @@ export class MentoringSessionsController {
         return { success: true, message: 'Mentoring session detail', data };
     }
 
+    /**
+     * Pastor asks the mentor to pick a new time (`sessionId` = appointment `_id`).
+     * Allowed while the session is `scheduled`, `in-progress`, `postponed`, or `missed` (one pending request per appointment).
+     */
     @Post(':sessionId/reschedule-request')
     async pastorRequestReschedule(
         @Param('sessionId', ParseMongoIdPipe) sessionId: string,

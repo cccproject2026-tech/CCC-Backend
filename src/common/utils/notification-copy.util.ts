@@ -135,9 +135,9 @@ export function mentoringRescheduleRequestNotification(args: {
     reason?: string;
 }): { name: string; details: string } {
     const n = args.sessionNumber;
-    let details = `Mentoring session ${n}: your pastor asked to reschedule (this applies after a missed session).`;
+    let details = `Mentoring session ${n}: your pastor asked to reschedule and pick a new time together.`;
     if (args.priorWhenLabel) {
-        details += ` Previous time: ${args.priorWhenLabel}.`;
+        details += ` Current scheduled time: ${args.priorWhenLabel}.`;
     }
     const r = args.reason?.trim();
     if (r) {

@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { ConfigModule } from '@nestjs/config';
 import { AppointmentsService } from './appointments.service';
@@ -13,6 +13,7 @@ import { MailerService } from '../../common/utils/mail.util';
 import { TranscriptSummaryService } from './transcript-summary.service';
 import { AppointmentsCronService } from './appointments.cron';
 import { GoogleCalendarModule } from '../google-calendar/google-calendar.module';
+import { MentoringSessionsModule } from '../mentoring-sessions/mentoring-sessions.module';
 
 @Module({
     imports: [
@@ -25,6 +26,7 @@ import { GoogleCalendarModule } from '../google-calendar/google-calendar.module'
         ZoomModule,
         ConfigModule,
         GoogleCalendarModule,
+        forwardRef(() => MentoringSessionsModule),
     ],
     controllers: [AppointmentsController, AvailabilityGatewayController],
     providers: [AppointmentsService, MailerService, TranscriptSummaryService, AppointmentsCronService],

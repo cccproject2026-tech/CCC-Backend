@@ -67,13 +67,21 @@ export class GoogleCalendarService {
         );
     }
 
-    getAuthUrl(userId: string): string {
+    /**
+     * @param state Signed short-lived JWT (issued by AuthService); must match OAuth `state`.
+     */
+    getAuthUrl(state: string): string {
         const client = this.createBareOAuth2Client();
+        // Narrow scopes for Calendar verification — events CRUD + freebusy/read.
+        const scope = [
+            'https://www.googleapis.com/auth/calendar.events',
+            'https://www.googleapis.com/auth/calendar.readonly',
+        ];
         return client.generateAuthUrl({
             access_type: 'offline',
-            scope: ['https://www.googleapis.com/auth/calendar'],
+            scope,
             prompt: 'consent',
-            state: userId,
+            state,
         });
     }
 
