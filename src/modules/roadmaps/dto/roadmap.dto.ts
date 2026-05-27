@@ -69,6 +69,33 @@ export class CheckboxExtraDto {
     buttonName?: string;
 }
 
+/**
+ * Checkbox rows embedded under extras (DATE_PICKER, SECTION, ASSESSMENT) often carry
+ * runtime fields (`checked`, etc.) and may omit template-only props; keep full CHECKBOX
+ * validation on CheckboxExtraDto for standalone CHECKBOX extras.
+ */
+export class ExtraCheckboxEntryDto {
+    @IsOptional()
+    @IsEnum(ExtraType)
+    type?: ExtraType.CHECKBOX;
+
+    @IsOptional()
+    @IsString()
+    name?: string;
+
+    @IsOptional()
+    @IsBoolean()
+    checked?: boolean;
+
+    @IsOptional()
+    @IsBoolean()
+    haveButton?: boolean;
+
+    @IsOptional()
+    @IsString()
+    buttonName?: string;
+}
+
 export class UploadExtraDto {
     @IsEnum(ExtraType)
     type: ExtraType.UPLOAD;
@@ -93,8 +120,12 @@ export class DatePickerExtraDto {
     @IsOptional()
     @IsArray()
     @ValidateNested({ each: true })
-    @Type(() => CheckboxExtraDto)
-    checkboxes?: CheckboxExtraDto[];
+    @Type(() => ExtraCheckboxEntryDto)
+    checkboxes?: ExtraCheckboxEntryDto[];
+
+    @IsOptional()
+    @IsBoolean()
+    haveButton?: boolean;
 
     @IsOptional()
     @IsString()
@@ -119,8 +150,8 @@ export class AssessmentExtraDto {
     @IsOptional()
     @IsArray()
     @ValidateNested({ each: true })
-    @Type(() => CheckboxExtraDto)
-    checkboxes?: CheckboxExtraDto[];
+    @Type(() => ExtraCheckboxEntryDto)
+    checkboxes?: ExtraCheckboxEntryDto[];
 }
 
 export class SignatureExtraDto {
@@ -154,8 +185,8 @@ export class SectionExtraDto {
     @IsOptional()
     @IsArray()
     @ValidateNested({ each: true })
-    @Type(() => CheckboxExtraDto)
-    checkboxes?: CheckboxExtraDto[];
+    @Type(() => ExtraCheckboxEntryDto)
+    checkboxes?: ExtraCheckboxEntryDto[];
 
     @IsOptional()
     @IsArray()
@@ -172,11 +203,23 @@ export class SectionExtraDto {
                 { value: DatePickerExtraDto, name: 'DATE_PICKER' },
                 { value: AssessmentExtraDto, name: 'ASSESSMENT' },
                 { value: SignatureExtraDto, name: 'SIGNATURE' },
+                /** Recursive SECTION nesting; omitting this made nested SECTION fall back to `Object` and whitelist strip children. */
+                { value: SectionExtraDto, name: 'SECTION' },
             ],
         },
         keepDiscriminatorProperty: true,
     })
-    sections?: (TextFieldExtraDto | TextAreaExtraDto | UploadExtraDto | DatePickerExtraDto | AssessmentExtraDto | SignatureExtraDto)[];
+    sections?: (
+        | TextFieldExtraDto
+        | TextAreaExtraDto
+        | TestDisplayExtraDto
+        | CheckboxExtraDto
+        | UploadExtraDto
+        | DatePickerExtraDto
+        | AssessmentExtraDto
+        | SignatureExtraDto
+        | SectionExtraDto
+    )[];
 }
 
 

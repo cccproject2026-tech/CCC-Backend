@@ -80,6 +80,9 @@ export class DatePickerExtra {
     checkboxes?: any[];
 
     @Prop()
+    haveButton?: boolean;
+
+    @Prop()
     buttonName?: string;
 }
 
