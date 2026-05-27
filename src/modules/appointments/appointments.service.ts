@@ -3,7 +3,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { ConfigService } from '@nestjs/config';
 import { Appointment, AppointmentDocument } from './schemas/appointment.schema';
-import { CreateAppointmentDto, AppointmentResponseDto, TranscriptSummaryResponseDto, UpdateAppointmentDto } from './dto/appointment.dto';
+import { CreateAppointmentDto, AppointmentResponseDto, TranscriptSummaryResponseDto, UpdateAppointmentDto, RecordSessionJoinDto } from './dto/appointment.dto';
 import { toAppointmentResponseDto } from './utils/appointment.mapper';
 import { APPOINTMENT_STATUSES, APPOINTMENT_PLATFORMS, ASSESSMENT_ASSIGNMENT_STATUSES, USER_STATUSES } from '../../common/constants/status.constants';
 import { Availability, AvailabilityDocument, DayAvailability } from './schemas/availability.schema';
@@ -58,6 +58,11 @@ export class AppointmentsService {
 
     private readonly userSelect = 'firstName lastName email phoneNumber profilePicture role roleId status';
     private readonly mentorSelect = 'firstName lastName email phoneNumber profilePicture role roleId status';
+
+    /** Appointment rows that still block mentor availability overlap & per-day caps. */
+    private slotOccupyingStatuses(): readonly string[] {
+        return [APPOINTMENT_STATUSES.SCHEDULED, APPOINTMENT_STATUSES.IN_PROGRESS];
+    }
 
     private populateBase(query: any) {
         return query
@@ -450,7 +455,7 @@ export class AppointmentsService {
     }
 
     /**
-     * Writes one UTC calendar day's availability (expanded chunks skip conflicts with SCHEDULED appointments).
+     * Writes one UTC calendar day's availability (expanded chunks skip conflicts with active appointments).
      */
     private async applyDayAvailabilityEntry(
         availability: AvailabilityDocument,
@@ -489,7 +494,7 @@ export class AppointmentsService {
                 .find({
                     mentorId,
                     meetingDate: { $gte: dayStart, $lte: dayEnd },
-                    status: APPOINTMENT_STATUSES.SCHEDULED,
+                    status: { $in: [...this.slotOccupyingStatuses()] },
                 })
                 .select('meetingDate endTime')
                 .lean();
@@ -611,6 +616,18 @@ export class AppointmentsService {
         );
     }
 
+    /** Lifecycle rules for PATCH `status` updates (same value = no-op, allowed without error). */
+    private assertAppointmentStatusPatchAllows(current: string, requested: string): void {
+        if (requested === current) return;
+        if (requested === APPOINTMENT_STATUSES.IN_PROGRESS) {
+            if (current !== APPOINTMENT_STATUSES.SCHEDULED) {
+                throw new BadRequestException(
+                    `Cannot set status to "${APPOINTMENT_STATUSES.IN_PROGRESS}" while status is "${current}" (transition from "${APPOINTMENT_STATUSES.SCHEDULED}" only).`,
+                );
+            }
+        }
+    }
+
     async create(dto: CreateAppointmentDto): Promise<AppointmentResponseDto> {
         const mentorId = new Types.ObjectId(dto.mentorId);
 
@@ -699,7 +716,7 @@ export class AppointmentsService {
             mentorId,
             meetingDate: { $lt: endTime },
             endTime: { $gt: meetingDate },
-            status: APPOINTMENT_STATUSES.SCHEDULED
+            status: { $in: [...this.slotOccupyingStatuses()] },
         });
 
         if (overlap) {
@@ -726,7 +743,7 @@ export class AppointmentsService {
         const dailyCount = await this.appointmentModel.countDocuments({
             mentorId,
             meetingDate: { $gte: startOfDay, $lte: endOfDay },
-            status: APPOINTMENT_STATUSES.SCHEDULED,
+            status: { $in: [...this.slotOccupyingStatuses()] },
         });
 
         endTime = new Date(finalMeetingDate.getTime() + durationMinutes * 60000);
@@ -763,7 +780,7 @@ export class AppointmentsService {
                 const count = await this.appointmentModel.countDocuments({
                     mentorId,
                     meetingDate: { $gte: startOfDay, $lte: endOfDay },
-                    status: APPOINTMENT_STATUSES.SCHEDULED,
+                    status: { $in: [...this.slotOccupyingStatuses()] },
                 });
 
                 if (count >= (availability?.maxBookingsPerDay ?? 5)) continue;
@@ -800,7 +817,7 @@ export class AppointmentsService {
                     mentorId,
                     meetingDate: { $lt: newEnd },
                     endTime: { $gt: newStart },
-                    status: APPOINTMENT_STATUSES.SCHEDULED
+                    status: { $in: [...this.slotOccupyingStatuses()] },
                 });
 
                 if (overlap) continue;
@@ -1070,28 +1087,44 @@ export class AppointmentsService {
         status?: string;
     }): Promise<AppointmentResponseDto[]> {
         const { userId, mentorId, futureOnly = true, status } = options || {};
-        const query: any = {};
+        const andClauses: Record<string, unknown>[] = [];
 
         if (userId && mentorId) {
             const userObjId = new Types.ObjectId(userId);
             const mentorObjId = new Types.ObjectId(mentorId);
-            query.$or = [
-                { userId: userObjId },
-                { mentorId: mentorObjId }
-            ];
+            andClauses.push({
+                $or: [{ userId: userObjId }, { mentorId: mentorObjId }],
+            });
         } else if (userId) {
-            query.userId = new Types.ObjectId(userId);
+            andClauses.push({ userId: new Types.ObjectId(userId) });
         } else if (mentorId) {
-            query.mentorId = new Types.ObjectId(mentorId);
+            andClauses.push({ mentorId: new Types.ObjectId(mentorId) });
         }
 
         if (futureOnly) {
-            query.meetingDate = { $gte: new Date() };
+            if (status === APPOINTMENT_STATUSES.IN_PROGRESS) {
+                andClauses.push({ status: APPOINTMENT_STATUSES.IN_PROGRESS });
+            } else if (status) {
+                andClauses.push({ meetingDate: { $gte: new Date() } });
+                andClauses.push({ status });
+            } else {
+                andClauses.push({
+                    $or: [
+                        { meetingDate: { $gte: new Date() } },
+                        { status: APPOINTMENT_STATUSES.IN_PROGRESS },
+                    ],
+                });
+            }
+        } else if (status) {
+            andClauses.push({ status });
         }
 
-        if (status) {
-            query.status = status;
-        }
+        const query: Record<string, unknown> =
+            andClauses.length === 0
+                ? {}
+                : andClauses.length === 1
+                  ? andClauses[0]
+                  : { $and: andClauses };
 
         const appointments = await this.populateBase(
             this.appointmentModel.find(query).sort({ meetingDate: 1 })
@@ -1120,12 +1153,10 @@ export class AppointmentsService {
                 userId,
                 mentorId: userId,
                 futureOnly: true,
-                status: APPOINTMENT_STATUSES.SCHEDULED
             });
         }
         return this.getAppointments({
             futureOnly: true,
-            status: APPOINTMENT_STATUSES.SCHEDULED
         });
     }
 
@@ -1212,6 +1243,10 @@ export class AppointmentsService {
             throw new NotFoundException(`Appointment with ID "${id}" not found.`);
         }
 
+        if (dto.status != null) {
+            this.assertAppointmentStatusPatchAllows(String(existing.status), dto.status);
+        }
+
         let durationMinutes = 60;
         const av = await this.availabilityModel
             .findOne({ mentorId: existing.mentorId })
@@ -1258,71 +1293,73 @@ export class AppointmentsService {
             await this.markLinkedAssessmentCompleted(new Types.ObjectId(id));
         }
 
-        try {
+        if (dto.meetingDate) {
+            try {
 
-            let userName = 'User';
-            let mentorName = 'Mentor';
+                let userName = 'User';
+                let mentorName = 'Mentor';
 
-            const userDoc: any = populated.userId;
-            const mentorDoc: any = populated.mentorId;
+                const userDoc: any = populated.userId;
+                const mentorDoc: any = populated.mentorId;
 
-            if (userDoc) userName = `${userDoc.firstName ?? ''} ${userDoc.lastName ?? ''}`.trim();
-            if (mentorDoc) mentorName = `${mentorDoc.firstName ?? ''} ${mentorDoc.lastName ?? ''}`.trim();
+                if (userDoc) userName = `${userDoc.firstName ?? ''} ${userDoc.lastName ?? ''}`.trim();
+                if (mentorDoc) mentorName = `${mentorDoc.firstName ?? ''} ${mentorDoc.lastName ?? ''}`.trim();
 
-            const whenLabel = formatMeetingDateForNotification(populated.meetingDate);
+                const whenLabel = formatMeetingDateForNotification(populated.meetingDate);
 
-            await this.notificationService.addNotification({
-                userId: populated.userId._id.toString(),
-                name: 'Appointment rescheduled',
-                details: `Your session with ${mentorName} is now ${whenLabel}. Open CCC for your updated Zoom link and calendar.`,
-                module: 'APPOINTMENT',
-            });
+                await this.notificationService.addNotification({
+                    userId: populated.userId._id.toString(),
+                    name: 'Appointment rescheduled',
+                    details: `Your session with ${mentorName} is now ${whenLabel}. Open CCC for your updated Zoom link and calendar.`,
+                    module: 'APPOINTMENT',
+                });
 
-            await this.notificationService.addNotification({
-                userId: populated.mentorId._id.toString(),
-                name: 'Appointment rescheduled',
-                details: `${userName} moved your shared session to ${whenLabel}. Check CCC for the latest meeting link.`,
-                module: 'APPOINTMENT',
-            });
+                await this.notificationService.addNotification({
+                    userId: populated.mentorId._id.toString(),
+                    name: 'Appointment rescheduled',
+                    details: `${userName} moved your shared session to ${whenLabel}. Check CCC for the latest meeting link.`,
+                    module: 'APPOINTMENT',
+                });
 
-            await this.notificationService.addNotification({
-                role: ROLES.DIRECTOR,
-                name: 'Appointment rescheduled',
-                details: `${userName} rescheduled their session with ${mentorName} to ${whenLabel}.`,
-                module: 'APPOINTMENT',
-            });
+                await this.notificationService.addNotification({
+                    role: ROLES.DIRECTOR,
+                    name: 'Appointment rescheduled',
+                    details: `${userName} rescheduled their session with ${mentorName} to ${whenLabel}.`,
+                    module: 'APPOINTMENT',
+                });
 
-            // Send rescheduled emails to pastor and mentor if Zoom link present
-            const joinUrl = (populated as any).meetingLink;
-            const zoom = (populated as any).zoomMeeting;
-            if (joinUrl) {
-                const emailOpts = {
-                    joinUrl,
-                    password: zoom?.password,
-                    meetingId: zoom?.meetingId,
-                    durationMinutes: 60,
-                    newMeetingDate: populated.meetingDate,
-                };
-                if (userDoc?.email) {
-                    await this.mailerService.sendAppointmentRescheduled({
-                        to: userDoc.email,
-                        recipientName: userName,
-                        otherPartyName: mentorName,
-                        ...emailOpts,
-                    });
+                // Send rescheduled emails to pastor and mentor if Zoom link present
+                const joinUrl = (populated as any).meetingLink;
+                const zoom = (populated as any).zoomMeeting;
+                if (joinUrl) {
+                    const emailOpts = {
+                        joinUrl,
+                        password: zoom?.password,
+                        meetingId: zoom?.meetingId,
+                        durationMinutes: 60,
+                        newMeetingDate: populated.meetingDate,
+                    };
+                    if (userDoc?.email) {
+                        await this.mailerService.sendAppointmentRescheduled({
+                            to: userDoc.email,
+                            recipientName: userName,
+                            otherPartyName: mentorName,
+                            ...emailOpts,
+                        });
+                    }
+                    if (mentorDoc?.email) {
+                        await this.mailerService.sendAppointmentRescheduled({
+                            to: mentorDoc.email,
+                            recipientName: mentorName,
+                            otherPartyName: userName,
+                            ...emailOpts,
+                        });
+                    }
                 }
-                if (mentorDoc?.email) {
-                    await this.mailerService.sendAppointmentRescheduled({
-                        to: mentorDoc.email,
-                        recipientName: mentorName,
-                        otherPartyName: userName,
-                        ...emailOpts,
-                    });
-                }
+
+            } catch (err) {
+                this.logger.warn(`Failed to send reschedule notifications: ${err?.message ?? err}`);
             }
-
-        } catch (err) {
-            this.logger.warn(`Failed to send reschedule notifications: ${err?.message ?? err}`);
         }
 
         return toAppointmentResponseDto(populated as AppointmentDocument);
@@ -1514,7 +1551,7 @@ export class AppointmentsService {
         const bookingCount = await this.appointmentModel.countDocuments({
             mentorId: mentorOid,
             meetingDate: { $gte: dayStart, $lte: dayEnd },
-            status: APPOINTMENT_STATUSES.SCHEDULED,
+            status: { $in: [...this.slotOccupyingStatuses()] },
         });
         if (bookingCount > 0) {
             throw new BadRequestException(
@@ -1681,7 +1718,7 @@ export class AppointmentsService {
             mentorId: mentorObjectId,
             meetingDate: { $lt: end },
             endTime: { $gt: start },
-            status: APPOINTMENT_STATUSES.SCHEDULED,
+            status: { $in: [...this.slotOccupyingStatuses()] },
         }).lean();
 
         if (scheduledAppointment) {
@@ -1843,7 +1880,7 @@ export class AppointmentsService {
                 const bookingCount = await this.appointmentModel.countDocuments({
                     mentorId: objectId,
                     meetingDate: { $gte: startOfDay, $lte: endOfDay },
-                    status: APPOINTMENT_STATUSES.SCHEDULED,
+                    status: { $in: [...this.slotOccupyingStatuses()] },
                 });
 
                 if (dayUnavailable || bookingCount >= (data.maxBookingsPerDay ?? 5)) {
@@ -1945,7 +1982,7 @@ export class AppointmentsService {
             _id: { $ne: appointmentId },
             meetingDate: { $lt: newEndUtc },
             endTime: { $gt: meetingDateUtc },
-            status: "scheduled"
+            status: { $in: [...this.slotOccupyingStatuses()] },
         });
 
         if (overlap)
@@ -1975,7 +2012,7 @@ export class AppointmentsService {
         const dailyCount = await this.appointmentModel.countDocuments({
             mentorId,
             meetingDate: { $gte: startOfDay, $lte: endOfDay },
-            status: APPOINTMENT_STATUSES.SCHEDULED,
+            status: { $in: [...this.slotOccupyingStatuses()] },
             _id: { $ne: appointmentId }
         });
 
@@ -2293,6 +2330,242 @@ export class AppointmentsService {
         return toAppointmentResponseDto(updated as AppointmentDocument);
     }
 
+    /**
+     * Cron hook: completes `in-progress` appointments after `endTime`, marks stale `scheduled` as missed,
+     * and clears reusable links on ended `completed` rows.
+     */
+    async runPastAppointmentLifecycleCron(): Promise<void> {
+        const now = new Date();
+        const GRACE_PERIOD_MS = 15 * 60 * 1000;
+        const missedCutoff = new Date(now.getTime() - GRACE_PERIOD_MS);
+
+        const inProgressCompleting = await this.appointmentModel
+            .find({
+                status: APPOINTMENT_STATUSES.IN_PROGRESS,
+                endTime: { $lt: now },
+            })
+            .select('_id')
+            .lean()
+            .exec();
+
+        if (inProgressCompleting.length > 0) {
+            const ids = inProgressCompleting.map((d) => d._id);
+            await this.appointmentModel.updateMany(
+                { _id: { $in: ids } },
+                {
+                    $set: { status: APPOINTMENT_STATUSES.COMPLETED },
+                    $unset: {
+                        meetingLink: 1,
+                        'zoomMeeting.joinUrl': 1,
+                        'zoomMeeting.startUrl': 1,
+                    },
+                },
+            );
+            for (const row of inProgressCompleting) {
+                await this.markLinkedAssessmentCompleted(row._id as Types.ObjectId);
+            }
+        }
+
+        const missedRes = await this.appointmentModel.updateMany(
+            {
+                status: APPOINTMENT_STATUSES.SCHEDULED,
+                endTime: { $lt: missedCutoff },
+            },
+            {
+                $set: {
+                    status: APPOINTMENT_STATUSES.MISSED,
+                },
+                $unset: {
+                    meetingLink: 1,
+                    'zoomMeeting.joinUrl': 1,
+                    'zoomMeeting.startUrl': 1,
+                },
+            },
+        );
+
+        const missedModified =
+            (missedRes as any)?.modifiedCount ??
+            (missedRes as any)?.nModified ??
+            0;
+
+        const completedRes = await this.appointmentModel.updateMany(
+            {
+                status: APPOINTMENT_STATUSES.COMPLETED,
+                endTime: { $lt: now },
+            },
+            {
+                $unset: {
+                    meetingLink: 1,
+                    'zoomMeeting.joinUrl': 1,
+                    'zoomMeeting.startUrl': 1,
+                },
+            },
+        );
+
+        const completedModified =
+            (completedRes as any)?.modifiedCount ??
+            (completedRes as any)?.nModified ??
+            0;
+
+        if (inProgressCompleting.length > 0 || missedModified > 0 || completedModified > 0) {
+            this.logger.log(
+                `Past appointments: completed(in-progress)→done ${inProgressCompleting.length}, marked missed ${missedModified}, cleared links on ended completed ${completedModified}.`,
+            );
+        }
+    }
+
+    /**
+     * Records a Zoom join for audit; host join sets `hostJoinedAt` on first touch and promotes `scheduled` → `in-progress`.
+     */
+    async recordSessionJoin(
+        appointmentId: string,
+        dto: RecordSessionJoinDto,
+    ): Promise<AppointmentResponseDto> {
+        const appointment = await this.appointmentModel.findById(appointmentId).lean() as AppointmentDocument | null;
+        if (!appointment) throw new NotFoundException('Appointment not found.');
+
+        if (
+            appointment.status !== APPOINTMENT_STATUSES.SCHEDULED &&
+            appointment.status !== APPOINTMENT_STATUSES.IN_PROGRESS
+        ) {
+            throw new BadRequestException(
+                `Join can only be recorded for scheduled or in-progress sessions (current status is "${appointment.status}").`,
+            );
+        }
+
+        const mentorIdStr = appointment.mentorId.toString();
+        const pastorIdStr = appointment.userId.toString();
+        const altParticipant =
+            appointment.googleCalendarNonMentorUserId != null
+                ? appointment.googleCalendarNonMentorUserId.toString()
+                : null;
+
+        if (dto.kind === 'host') {
+            if (dto.userId !== mentorIdStr) {
+                throw new ForbiddenException('Only the mentor (host) can record a host join.');
+            }
+        } else if (dto.userId !== pastorIdStr && dto.userId !== altParticipant) {
+            throw new ForbiddenException(
+                'Participant join must use the appointment participant user id (or googleCalendarNonMentorUserId when set).',
+            );
+        }
+
+        const entry = {
+            at: new Date(),
+            userId: new Types.ObjectId(dto.userId),
+            kind: dto.kind,
+        };
+
+        const setPayload: Record<string, unknown> = {};
+        if (dto.kind === 'host' && !appointment.hostJoinedAt) {
+            setPayload.hostJoinedAt = new Date();
+        }
+        if (dto.kind === 'host' && appointment.status === APPOINTMENT_STATUSES.SCHEDULED) {
+            setPayload.status = APPOINTMENT_STATUSES.IN_PROGRESS;
+        }
+
+        const updateDoc: Record<string, unknown> = {
+            $push: { joinAudit: entry },
+        };
+        if (Object.keys(setPayload).length > 0) {
+            updateDoc.$set = setPayload;
+        }
+
+        const updated = await this.populateBase(
+            this.appointmentModel.findByIdAndUpdate(appointment._id, updateDoc, { new: true }),
+        ).lean().exec();
+
+        if (!updated) throw new NotFoundException('Appointment not found.');
+
+        return toAppointmentResponseDto(updated as AppointmentDocument);
+    }
+
+    /**
+     * Manual "no-show": sets status to missed and clears join URLs (aligned with {@link AppointmentsCronService.completePastAppointments}).
+     */
+    async markMissed(
+        appointmentId: string,
+        dto: { reason?: string },
+    ): Promise<AppointmentResponseDto> {
+        const appointment = await this.appointmentModel.findById(appointmentId).lean() as AppointmentDocument | null;
+        if (!appointment) throw new NotFoundException('Appointment not found.');
+
+        if (appointment.status === APPOINTMENT_STATUSES.MISSED) {
+            const populatedAgain = await this.populateBase(
+                this.appointmentModel.findById(appointment._id),
+            ).lean().exec() as AppointmentDocument | null;
+            if (!populatedAgain) throw new NotFoundException('Appointment not found.');
+            return toAppointmentResponseDto(populatedAgain);
+        }
+
+        if (
+            appointment.status !== APPOINTMENT_STATUSES.SCHEDULED &&
+            appointment.status !== APPOINTMENT_STATUSES.IN_PROGRESS
+        ) {
+            throw new BadRequestException(
+                `Only scheduled or in-progress appointments can be marked as missed (current status is "${appointment.status}").`,
+            );
+        }
+
+        const updated = await this.populateBase(
+            this.appointmentModel.findByIdAndUpdate(
+                appointment._id,
+                {
+                    $set: {
+                        status: APPOINTMENT_STATUSES.MISSED,
+                    },
+                    $unset: {
+                        meetingLink: 1,
+                        'zoomMeeting.joinUrl': 1,
+                        'zoomMeeting.startUrl': 1,
+                    },
+                },
+                { new: true },
+            ),
+        ).lean().exec();
+
+        if (!updated) throw new NotFoundException('Appointment not found.');
+
+        try {
+            let userName = 'User';
+            let mentorName = 'Mentor';
+
+            const userDoc: any = updated.userId;
+            const mentorDoc: any = updated.mentorId;
+
+            if (userDoc) userName = `${userDoc.firstName ?? ''} ${userDoc.lastName ?? ''}`.trim();
+            if (mentorDoc) mentorName = `${mentorDoc.firstName ?? ''} ${mentorDoc.lastName ?? ''}`.trim();
+
+            const whenLabel = formatMeetingDateForNotification(updated.meetingDate);
+            const reasonText = dto.reason ? `Note: ${dto.reason}` : '';
+
+            await this.notificationService.addNotification({
+                userId: updated.userId._id.toString(),
+                name: 'Session marked missed',
+                details: `The session with ${mentorName} planned for ${whenLabel} was recorded as missed. ${reasonText}`.trim(),
+                module: 'APPOINTMENT',
+            });
+
+            await this.notificationService.addNotification({
+                userId: updated.mentorId._id.toString(),
+                name: 'Session marked missed',
+                details: `${userName}'s mentorship session (${whenLabel}) was recorded as missed. ${reasonText}`.trim(),
+                module: 'APPOINTMENT',
+            });
+
+            await this.notificationService.addNotification({
+                role: ROLES.DIRECTOR,
+                name: 'Session marked missed',
+                details: `Missed: ${userName} with ${mentorName} (${whenLabel}). ${reasonText}`.trim(),
+                module: 'APPOINTMENT',
+            });
+        } catch (err) {
+            this.logger.warn(`Failed to send missed-session notifications: ${err?.message ?? err}`);
+        }
+
+        return toAppointmentResponseDto(updated as AppointmentDocument);
+    }
+
     async getWeeklyAvailabilityByDate(
         mentorId: string,
         dateStr: string,
@@ -2333,7 +2606,7 @@ export class AppointmentsService {
                 const bookingCount = await this.appointmentModel.countDocuments({
                     mentorId: objectId,
                     meetingDate: { $gte: startOfDay, $lte: endOfDay },
-                    status: APPOINTMENT_STATUSES.SCHEDULED,
+                    status: { $in: [...this.slotOccupyingStatuses()] },
                 });
 
                 if (bookingCount >= (availability.maxBookingsPerDay ?? 5)) {

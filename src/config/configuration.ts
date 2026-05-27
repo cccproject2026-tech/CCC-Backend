@@ -61,4 +61,12 @@ export default () => ({
         whisperModel: process.env.OPENAI_WHISPER_MODEL || 'whisper-1',
         whisperTimeoutMs: parseInt(process.env.OPENAI_WHISPER_TIMEOUT_MS ?? '120000', 10),
     },
+
+    /** After Google Calendar OAuth callback; append `googleCalendar=linked` or `googleCalendar=error`. */
+    googleCalendarOAuth: {
+        successRedirectUrl:
+            process.env.GOOGLE_OAUTH_SUCCESS_REDIRECT?.trim() ||
+            process.env.FRONTEND_SUCCESS_REDIRECT?.trim() ||
+            '',
+    },
 });

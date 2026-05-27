@@ -70,7 +70,7 @@ export interface DirectorPastorJourneyDto {
     nextSession: UnifiedMentoringSessionDto | null;
 }
 
-/** Pastor requests reschedule for missed session (`sessionId` path = appointment id). */
+/** Pastor requests mentor reschedule (`sessionId` = appointment `_id`; must match mentoring journey extras). */
 export class PastorRescheduleRequestDto {
     @IsOptional()
     @IsString()

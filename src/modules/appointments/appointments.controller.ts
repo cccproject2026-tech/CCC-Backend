@@ -1,6 +1,6 @@
-import { Controller, Post, Body, Get, Param, Patch, Query, HttpCode, Headers, Logger, Req, BadRequestException, Delete, Put } from '@nestjs/common';
+import { Controller, Post, Body, Get, Param, Patch, Query, HttpCode, Headers, Logger, Req, BadRequestException, Delete, Put, Inject, forwardRef } from '@nestjs/common';
 import { AppointmentsService } from './appointments.service';
-import { CreateAppointmentDto, AppointmentResponseDto, UpdateAppointmentDto, CancelAppointmentDto, TranscriptSummaryResponseDto } from './dto/appointment.dto';
+import { CreateAppointmentDto, AppointmentResponseDto, UpdateAppointmentDto, CancelAppointmentDto, MarkMissedAppointmentDto, RecordSessionJoinDto, TranscriptSummaryResponseDto } from './dto/appointment.dto';
 import { BaseResponse } from 'src/shared/interfaces/base-response.interface';
 import { createHmac } from 'crypto';
 import { ConfigService } from '@nestjs/config';
@@ -14,6 +14,8 @@ import {
     UpsertSingleDayAvailabilityDto,
 } from './dto/availability.dto';
 import { ParseMongoIdPipe } from 'src/common/pipes/parse-mongo-id.pipe';
+import { MentoringSessionsService } from '../mentoring-sessions/mentoring-sessions.service';
+import { PastorRescheduleRequestDto } from '../mentoring-sessions/dto/mentoring-sessions.dto';
 
 @Controller('appointments')
 export class AppointmentsController {
@@ -22,6 +24,8 @@ export class AppointmentsController {
     constructor(
         private readonly appointmentsService: AppointmentsService,
         private readonly configService: ConfigService,
+        @Inject(forwardRef(() => MentoringSessionsService))
+        private readonly mentoringSessionsService: MentoringSessionsService,
     ) { }
 
     @Post()
@@ -44,7 +48,7 @@ export class AppointmentsController {
         const data = await this.appointmentsService.getAppointments({
             userId,
             mentorId,
-            status: status || 'scheduled',
+            ...(status ? { status } : {}),
             futureOnly: futureOnly !== 'false',
         });
         return {
@@ -317,6 +321,52 @@ export class AppointmentsController {
     ) {
         const result = await this.appointmentsService.cancel(id, { reason: body.reason });
         return { success: true, data: result };
+    }
+
+    /**
+     * Mark a scheduled session as missed (no-show). Clears reusable join URLs like the cron job.
+     * Idempotent when already missed. Response `data.status` is `missed`.
+     */
+    @Patch(':id/missed')
+    async markMissed(
+        @Param('id') id: string,
+        @Body() body: MarkMissedAppointmentDto,
+    ): Promise<BaseResponse<AppointmentResponseDto>> {
+        const data = await this.appointmentsService.markMissed(id, { reason: body?.reason });
+        return {
+            success: true,
+            message: 'Appointment marked as missed.',
+            data,
+        };
+    }
+
+    /**
+     * Audit trail for opening the Zoom client. Host join also sets `status` to `in-progress` when still `scheduled`.
+     */
+    @Post(':id/join')
+    async recordJoin(
+        @Param('id') id: string,
+        @Body() body: RecordSessionJoinDto,
+    ): Promise<BaseResponse<AppointmentResponseDto>> {
+        const data = await this.appointmentsService.recordSessionJoin(id, body);
+        return {
+            success: true,
+            message: 'Join recorded.',
+            data,
+        };
+    }
+
+    /**
+     * Mentoring journey: pastor asks the assigned mentor for a different time (queued until mentor picks a slot).
+     * Same behavior as `POST /mentoring-sessions/:id/reschedule-request`.
+     */
+    @Post(':id/pastor-reschedule-request')
+    async pastorRescheduleRequest(
+        @Param('id', ParseMongoIdPipe) id: string,
+        @Body() body: PastorRescheduleRequestDto,
+    ): Promise<BaseResponse<unknown>> {
+        const data = await this.mentoringSessionsService.createRescheduleRequest(id, body.pastorId, body.reason);
+        return { success: true, message: 'Reschedule request recorded', data };
     }
 
     @Get('pastor/:id/transcript-summary')

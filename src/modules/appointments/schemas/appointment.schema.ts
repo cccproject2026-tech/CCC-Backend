@@ -73,6 +73,27 @@ export class Appointment {
     @Prop({ type: String, default: null })
     cancelReason?: string;
 
+    /** First time the Zoom host recorded joining (via `POST …/join` with kind `host`). */
+    @Prop({ type: Date, default: null })
+    hostJoinedAt?: Date | null;
+
+    /** Append-only audit of join events (`POST …/join`). */
+    @Prop({
+        type: [
+            {
+                at: { type: Date, required: true },
+                userId: { type: Types.ObjectId, ref: 'User', required: true },
+                kind: {
+                    type: String,
+                    enum: ['host', 'participant'],
+                    required: true,
+                },
+            },
+        ],
+        default: [],
+    })
+    joinAudit?: Array<{ at: Date; userId: Types.ObjectId; kind: 'host' | 'participant' }>;
+
     // Zoom meeting fields
     @Prop({ type: String, default: null, index: true })
     zoomMeetingId?: string;
@@ -150,14 +171,6 @@ export class Appointment {
 }
 
 export const AppointmentSchema = SchemaFactory.createForClass(Appointment);
-
-AppointmentSchema.pre('save', function (next) {
-    if (this.isModified('meetingDate') && this.meetingDate) {
-        const endTime = new Date(this.meetingDate.getTime() + 60 * 60 * 1000);
-        (this as any).endTime = endTime;
-    }
-    next();
-});
 
 AppointmentSchema.index({ meetingDate: 1, endTime: 1 });
 AppointmentSchema.index({ userId: 1, meetingDate: 1 });

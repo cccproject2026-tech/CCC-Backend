@@ -197,11 +197,37 @@ export class AuthService {
         return { success: true };
     }
 
-    getGoogleAuthUrl(userId: string) {
-        return this.googleService.getAuthUrl(userId);
+    getGoogleAuthUrl(userId: string): string {
+        const state = this.jwtService.sign(
+            { sub: userId, googleCalendarOAuth: true },
+            { expiresIn: '10m' },
+        );
+        return this.googleService.getAuthUrl(state);
     }
 
-    async handleGoogleCallback(code: string, userId: string) {
+    /**
+     * Validates signed `state` from Google redirect; returns CCC user mongo id (links tokens to this user).
+     */
+    private recoverUserIdFromGoogleOAuthState(state: string): string {
+        if (!state?.trim()) {
+            throw new BadRequestException('Missing OAuth state.');
+        }
+        try {
+            const payload = this.jwtService.verify<{ sub?: string; googleCalendarOAuth?: boolean }>(state.trim());
+            if (!payload?.sub || payload.googleCalendarOAuth !== true) {
+                throw new BadRequestException('Invalid OAuth state payload.');
+            }
+            return payload.sub;
+        } catch (e: unknown) {
+            if (e instanceof BadRequestException) throw e;
+            throw new BadRequestException(
+                'Invalid or expired OAuth state. Open “Link Google Calendar” again from CCC.',
+            );
+        }
+    }
+
+    async handleGoogleCallback(code: string, state: string) {
+        const userId = this.recoverUserIdFromGoogleOAuthState(state);
         await this.usersService.findById(userId);
         const tokens = await this.googleService.getTokens(code);
         /** `findById` strips OAuth fields from the payload; must read secrets from DB separately. */

@@ -1,4 +1,4 @@
-import { IsDateString, IsEnum, IsMongoId, IsOptional, IsString, IsNotEmpty, IsBoolean } from 'class-validator';
+import { IsDateString, IsEnum, IsMongoId, IsOptional, IsString, IsNotEmpty, IsBoolean, IsIn } from 'class-validator';
 import { PartialType, OmitType } from '@nestjs/mapped-types';
 import { VALID_APPOINTMENT_PLATFORMS, VALID_APPOINTMENT_STATUSES } from '../../../common/constants/status.constants';
 
@@ -78,6 +78,12 @@ export class ZoomMeetingDto {
     duration?: number;
 }
 
+export class SessionJoinAuditEntryDto {
+    at: Date;
+    userId: string;
+    kind: 'host' | 'participant';
+}
+
 export class TranscriptSummaryDto {
     sessionOverview: string;
     keyDiscussionPoints: string[];
@@ -105,6 +111,12 @@ export class AppointmentResponseDto {
 
     zoomMeetingId?: string;
     zoomMeeting?: ZoomMeetingDto;
+
+    /** Zoom meeting password when present (mirrors `zoomMeeting.password`); use when join URL has no `pwd=`. */
+    zoomPasscode?: string;
+
+    hostJoinedAt?: Date;
+    joinAudit?: SessionJoinAuditEntryDto[];
 
     transcript?: string;
     transcriptSavedAt?: Date;
@@ -135,4 +147,21 @@ export class TranscriptSummaryResponseDto {
 
 export class CancelAppointmentDto {
     readonly reason?: string;
+}
+
+/** Mentor/director marks a scheduled session as a no-show; join links are cleared (same as automatic missed processing). */
+export class MarkMissedAppointmentDto {
+    @IsOptional()
+    @IsString()
+    readonly reason?: string;
+}
+
+/** Records a host or participant joining the live session; host first join can move status to `in-progress`. */
+export class RecordSessionJoinDto {
+    @IsMongoId()
+    @IsNotEmpty()
+    userId: string;
+
+    @IsIn(['host', 'participant'])
+    kind: 'host' | 'participant';
 }

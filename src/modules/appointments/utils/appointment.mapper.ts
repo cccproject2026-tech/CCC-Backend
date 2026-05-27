@@ -1,3 +1,4 @@
+import type { Types } from 'mongoose';
 import { AppointmentDocument } from '../schemas/appointment.schema';
 import { AppointmentResponseDto } from '../dto/appointment.dto';
 
@@ -22,8 +23,9 @@ type LooseAppointment = AppointmentDocument & {
     transcriptSummaryModel?: string;
     mentorGoogleCalendarEventId?: string | null;
     userGoogleCalendarEventId?: string | null;
+    hostJoinedAt?: Date | null;
+    joinAudit?: Array<{ at: Date; userId: Types.ObjectId | string; kind: string }>;
 };
-
 export const toAppointmentResponseDto = (
     appointment: LooseAppointment
 ): AppointmentResponseDto => {
@@ -86,6 +88,20 @@ export const toAppointmentResponseDto = (
             topic: appointment.zoomMeeting.topic,
             duration: appointment.zoomMeeting.duration,
         } : undefined,
+
+        zoomPasscode: appointment.zoomMeeting?.password ?? undefined,
+
+        hostJoinedAt: appointment.hostJoinedAt ?? undefined,
+        joinAudit: Array.isArray(appointment.joinAudit) && appointment.joinAudit.length > 0
+            ? appointment.joinAudit.map((e) => ({
+                at: e.at,
+                userId:
+                    e.userId != null && typeof (e.userId as { toString?: () => string }).toString === 'function'
+                        ? (e.userId as { toString: () => string }).toString()
+                        : String(e.userId),
+                kind: e.kind as 'host' | 'participant',
+            }))
+            : undefined,
 
         createdAt: appointment.createdAt ?? undefined,
         updatedAt: appointment.updatedAt ?? undefined,

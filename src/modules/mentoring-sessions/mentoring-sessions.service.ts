@@ -38,6 +38,7 @@ const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 /** Future sessions eligible for cascading +30d shift after a reschedule (“unlocked” = not finalized). */
 const APPOINTMENT_STATUSES_ELIGIBLE_FOR_CASCADE_SHIFT: ReadonlyArray<string> = [
     APPOINTMENT_STATUSES.SCHEDULED,
+    APPOINTMENT_STATUSES.IN_PROGRESS,
     APPOINTMENT_STATUSES.POSTPONED,
     APPOINTMENT_STATUSES.MISSED,
 ];
@@ -112,6 +113,8 @@ export class MentoringSessionsService {
         const j = typeof extrasDataStatus === 'string' ? extrasDataStatus.toUpperCase().trim() : '';
         const mapUpper: Record<string, string> = {
             SCHEDULED: APPOINTMENT_STATUSES.SCHEDULED,
+            'IN-PROGRESS': APPOINTMENT_STATUSES.IN_PROGRESS,
+            IN_PROGRESS: APPOINTMENT_STATUSES.IN_PROGRESS,
             COMPLETED: APPOINTMENT_STATUSES.COMPLETED,
             MISSED: APPOINTMENT_STATUSES.MISSED,
             POSTPONED: APPOINTMENT_STATUSES.POSTPONED,
@@ -513,9 +516,15 @@ export class MentoringSessionsService {
         if (String(appointment.userId) !== pastorId) {
             throw new ForbiddenException('This appointment does not belong to the pastor.');
         }
-        if (appointment.status !== APPOINTMENT_STATUSES.MISSED) {
+        const allowedStatuses: readonly string[] = [
+            APPOINTMENT_STATUSES.SCHEDULED,
+            APPOINTMENT_STATUSES.IN_PROGRESS,
+            APPOINTMENT_STATUSES.POSTPONED,
+            APPOINTMENT_STATUSES.MISSED,
+        ];
+        if (!allowedStatuses.includes(String(appointment.status))) {
             throw new BadRequestException(
-                `Reschedule requests are only allowed for missed sessions (status is "${appointment.status}").`,
+                `Reschedule requests are only allowed for sessions that can still be rescheduled (status is "${appointment.status}").`,
             );
         }
 

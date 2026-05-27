@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { MentoringSessionsController } from './mentoring-sessions.controller';
 import { MentoringSessionsService } from './mentoring-sessions.service';
@@ -22,7 +22,7 @@ import { HomeModule } from '../home/home.module';
             { name: MentoringRescheduleRequest.name, schema: MentoringRescheduleRequestSchema },
         ]),
         RoadMapsModule,
-        AppointmentsModule,
+        forwardRef(() => AppointmentsModule),
         HomeModule,
     ],
     controllers: [MentoringSessionsController],
