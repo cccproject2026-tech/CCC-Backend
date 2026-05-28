@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException, BadRequestException, NotFoundException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, BadRequestException, NotFoundException, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { UsersService } from '../../modules/users/users.service';
@@ -13,9 +13,12 @@ import { toUserResponseDto } from '../users/utils/user.mapper';
 import { GoogleCalendarService } from '../google-calendar/google-calendar.service';
 import { Interest, InterestDocument } from '../interests/schemas/interest.schema';
 import { buildOnboardingStatusResponse } from './utils/onboarding-status.util';
+import { GOOGLE_CALENDAR_STATUSES } from '../../common/constants/google-calendar.constants';
 
 @Injectable()
 export class AuthService {
+    private readonly logger = new Logger(AuthService.name);
+
     constructor(
         private readonly usersService: UsersService,
         private readonly jwtService: JwtService,
@@ -229,19 +232,29 @@ export class AuthService {
     async handleGoogleCallback(code: string, state: string) {
         const userId = this.recoverUserIdFromGoogleOAuthState(state);
         await this.usersService.findById(userId);
-        const tokens = await this.googleService.getTokens(code);
-        /** `findById` strips OAuth fields from the payload; must read secrets from DB separately. */
-        const existingOAuth = await this.usersService.getGoogleOAuthCalendarCredentials(userId);
+        try {
+            const tokens = await this.googleService.getTokens(code);
+            /** `findById` strips OAuth fields from the payload; must read secrets from DB separately. */
+            const existingOAuth = await this.usersService.getGoogleOAuthCalendarCredentials(userId);
 
-        const nextRefreshToken = tokens.refresh_token ?? existingOAuth?.googleRefreshToken;
-        await this.usersService.update(userId, {
-            googleAccessToken: tokens.access_token ?? undefined,
-            ...(nextRefreshToken !== undefined && nextRefreshToken !== null
-                ? { googleRefreshToken: nextRefreshToken }
-                : {}),
-            googleTokenExpiry: tokens.expiry_date ?? undefined,
-        });
-
-        return true;
+            const nextRefreshToken = tokens.refresh_token ?? existingOAuth?.googleRefreshToken;
+            await this.usersService.update(userId, {
+                googleAccessToken: tokens.access_token ?? undefined,
+                ...(nextRefreshToken !== undefined && nextRefreshToken !== null
+                    ? { googleRefreshToken: nextRefreshToken }
+                    : {}),
+                googleTokenExpiry: tokens.expiry_date ?? undefined,
+                googleCalendarStatus: GOOGLE_CALENDAR_STATUSES.CONNECTED,
+                googleCalendarConnectedAt: existingOAuth?.googleCalendarConnectedAt ?? new Date(),
+                googleCalendarLastSyncAt: new Date(),
+            });
+            this.logger.log(`Google Calendar connected for user ${userId}`);
+            return true;
+        } catch (err: unknown) {
+            await this.usersService.updateGoogleCalendarStatus(userId, GOOGLE_CALENDAR_STATUSES.ERROR);
+            const msg = err instanceof Error ? err.message : String(err);
+            this.logger.warn(`Google token exchange failed for user ${userId}: ${msg}`);
+            throw err;
+        }
     }
 }

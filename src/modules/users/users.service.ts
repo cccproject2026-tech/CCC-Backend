@@ -32,6 +32,7 @@ import {
     assignmentNotificationGeneric,
 } from '../../common/utils/notification-copy.util';
 import { ConfigService } from '@nestjs/config';
+import { GOOGLE_CALENDAR_STATUSES, GoogleCalendarStatus } from '../../common/constants/google-calendar.constants';
 
 /** Mongoose assigns `_id` on each `uploadedDocuments` subdocument; it is not on the User class fields type. */
 type UploadedDocumentSubdoc = User['uploadedDocuments'][number] & {
@@ -202,10 +203,16 @@ export class UsersService {
         googleRefreshToken?: string;
         googleTokenExpiry?: number;
         googleCalendarId?: string | null;
+        googleCalendarStatus?: GoogleCalendarStatus;
+        googleCalendarConnectedAt?: Date;
+        googleCalendarLastSyncAt?: Date;
+        googleCalendarEmail?: string;
     } | null> {
         const u = await this.userModel
             .findById(userId)
-            .select('googleAccessToken googleRefreshToken googleTokenExpiry googleCalendarId')
+            .select(
+                'googleAccessToken googleRefreshToken googleTokenExpiry googleCalendarId googleCalendarStatus googleCalendarConnectedAt googleCalendarLastSyncAt googleCalendarEmail',
+            )
             .lean()
             .exec();
         if (!u) return null;
@@ -214,7 +221,52 @@ export class UsersService {
             googleRefreshToken: u.googleRefreshToken ?? undefined,
             googleTokenExpiry: u.googleTokenExpiry ?? undefined,
             googleCalendarId: u.googleCalendarId ?? undefined,
+            googleCalendarStatus: (u.googleCalendarStatus as GoogleCalendarStatus | undefined) ?? undefined,
+            googleCalendarConnectedAt: u.googleCalendarConnectedAt ?? undefined,
+            googleCalendarLastSyncAt: u.googleCalendarLastSyncAt ?? undefined,
+            googleCalendarEmail: u.googleCalendarEmail ?? undefined,
         };
+    }
+
+    async updateGoogleCalendarStatus(
+        userId: string,
+        status: GoogleCalendarStatus,
+        extras?: {
+            connectedAt?: Date | null;
+            lastSyncAt?: Date | null;
+            googleCalendarEmail?: string | null;
+            clearTokens?: boolean;
+        },
+    ): Promise<void> {
+        const patch: Record<string, unknown> = {
+            googleCalendarStatus: status,
+        };
+
+        if (extras?.connectedAt !== undefined) {
+            patch.googleCalendarConnectedAt = extras.connectedAt;
+        }
+        if (extras?.lastSyncAt !== undefined) {
+            patch.googleCalendarLastSyncAt = extras.lastSyncAt;
+        }
+        if (extras?.googleCalendarEmail !== undefined) {
+            patch.googleCalendarEmail = extras.googleCalendarEmail;
+        }
+        if (extras?.clearTokens) {
+            patch.googleAccessToken = null;
+            patch.googleRefreshToken = null;
+            patch.googleTokenExpiry = null;
+        }
+
+        await this.userModel.findByIdAndUpdate(userId, patch).exec();
+    }
+
+    async touchGoogleCalendarLastSync(userId: string, at = new Date()): Promise<void> {
+        await this.userModel
+            .findByIdAndUpdate(userId, {
+                googleCalendarLastSyncAt: at,
+                googleCalendarStatus: GOOGLE_CALENDAR_STATUSES.CONNECTED,
+            })
+            .exec();
     }
 
     async findById(id: string): Promise<any> {

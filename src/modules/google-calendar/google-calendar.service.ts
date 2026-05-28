@@ -1,7 +1,8 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { google, calendar_v3 } from 'googleapis';
 import { UsersService } from '../users/users.service';
+import { GOOGLE_CALENDAR_STATUSES } from '../../common/constants/google-calendar.constants';
 
 /** `extendedProperties.private` keys for CCC availability mirror events on Google Calendar. */
 export const CCC_GOOGLE_AVAIL_MARKER_HOST_KEY = 'cccAvailHost';
@@ -59,30 +60,113 @@ export class GoogleCalendarService {
         private readonly usersService: UsersService,
     ) {}
 
+    private getGoogleOAuthConfig(): {
+        clientId: string;
+        clientSecret: string;
+        redirectUri: string;
+    } {
+        const clientId = this.configService.get<string>('GOOGLE_CLIENT_ID')?.trim() ?? '';
+        const clientSecret = this.configService.get<string>('GOOGLE_CLIENT_SECRET')?.trim() ?? '';
+        const redirectUri = this.configService.get<string>('GOOGLE_REDIRECT_URI')?.trim() ?? '';
+
+        const missing: string[] = [];
+        if (!clientId) missing.push('GOOGLE_CLIENT_ID');
+        if (!clientSecret) missing.push('GOOGLE_CLIENT_SECRET');
+        if (!redirectUri) missing.push('GOOGLE_REDIRECT_URI');
+
+        if (missing.length > 0) {
+            this.logger.error(
+                `Google OAuth config missing: ${missing.join(', ')}. ` +
+                    'Set these env vars in runtime secrets (docker/pm2/deployment), not only local files.',
+            );
+            throw new InternalServerErrorException(
+                `Google OAuth is not configured correctly (missing: ${missing.join(', ')}).`,
+            );
+        }
+
+        if (!/^https?:\/\//i.test(redirectUri)) {
+            this.logger.error(`GOOGLE_REDIRECT_URI must be absolute. Received: "${redirectUri}"`);
+            throw new InternalServerErrorException(
+                'Google OAuth is misconfigured: GOOGLE_REDIRECT_URI must be an absolute URL.',
+            );
+        }
+
+        return { clientId, clientSecret, redirectUri };
+    }
+
     private createBareOAuth2Client() {
-        return new google.auth.OAuth2(
-            this.configService.get<string>('GOOGLE_CLIENT_ID'),
-            this.configService.get<string>('GOOGLE_CLIENT_SECRET'),
-            this.configService.get<string>('GOOGLE_REDIRECT_URI'),
+        const { clientId, clientSecret, redirectUri } = this.getGoogleOAuthConfig();
+        this.logger.debug(
+            `Google OAuth init: redirect_uri=${redirectUri}, client_id_present=${Boolean(clientId)}, client_secret_present=${Boolean(clientSecret)}`,
         );
+        return new google.auth.OAuth2(
+            clientId,
+            clientSecret,
+            redirectUri,
+        );
+    }
+
+    private isGoogleAuthFailure(err: unknown): boolean {
+        const rec = err as {
+            code?: number;
+            message?: string;
+            response?: { status?: number; data?: unknown };
+            errors?: Array<{ message?: string }>;
+        };
+        const status = rec?.code ?? rec?.response?.status;
+        if (status === 401 || status === 403) return true;
+        const message =
+            String(rec?.message ?? '') +
+            ' ' +
+            String(rec?.errors?.map((e) => e?.message).join(' ') ?? '');
+        return /invalid[_\s-]?grant|revoked|invalid credentials|unauthorized|token/i.test(message);
+    }
+
+    private async markCalendarDisconnected(userId: string, reason: string): Promise<void> {
+        this.logger.warn(`Google Calendar disconnected for user ${userId}: ${reason}`);
+        await this.usersService.updateGoogleCalendarStatus(userId, GOOGLE_CALENDAR_STATUSES.DISCONNECTED, {
+            clearTokens: true,
+        });
+    }
+
+    private async markCalendarExpired(userId: string, reason: string): Promise<void> {
+        this.logger.warn(`Google Calendar token expired for user ${userId}: ${reason}`);
+        await this.usersService.updateGoogleCalendarStatus(userId, GOOGLE_CALENDAR_STATUSES.EXPIRED);
     }
 
     /**
      * @param state Signed short-lived JWT (issued by AuthService); must match OAuth `state`.
      */
     getAuthUrl(state: string): string {
+        if (!state?.trim()) {
+            throw new BadRequestException('Missing OAuth state.');
+        }
         const client = this.createBareOAuth2Client();
         // Narrow scopes for Calendar verification — events CRUD + freebusy/read.
         const scope = [
             'https://www.googleapis.com/auth/calendar.events',
             'https://www.googleapis.com/auth/calendar.readonly',
         ];
-        return client.generateAuthUrl({
+        const url = client.generateAuthUrl({
             access_type: 'offline',
             scope,
             prompt: 'consent',
             state,
         });
+
+        const parsed = new URL(url);
+        const redirectUri = parsed.searchParams.get('redirect_uri');
+        if (!redirectUri) {
+            this.logger.error(`Generated Google auth URL missing redirect_uri: ${url}`);
+            throw new InternalServerErrorException(
+                'Failed to generate Google OAuth URL (redirect_uri is missing).',
+            );
+        }
+
+        this.logger.debug(
+            `Generated Google auth URL with redirect_uri=${redirectUri}, response_type=${parsed.searchParams.get('response_type')}`,
+        );
+        return url;
     }
 
     async getTokens(code: string): Promise<{
@@ -109,6 +193,12 @@ export class GoogleCalendarService {
         const creds = await this.usersService.getGoogleOAuthCalendarCredentials(userId);
 
         if (!creds?.googleRefreshToken && !creds?.googleAccessToken) {
+            if (creds?.googleCalendarStatus !== GOOGLE_CALENDAR_STATUSES.DISCONNECTED) {
+                await this.usersService.updateGoogleCalendarStatus(
+                    userId,
+                    GOOGLE_CALENDAR_STATUSES.DISCONNECTED,
+                );
+            }
             return null;
         }
 
@@ -145,11 +235,26 @@ export class GoogleCalendarService {
             } catch (err: unknown) {
                 const msg = err instanceof Error ? err.message : String(err);
                 this.logger.warn(`Google OAuth refresh failed for user ${userId}: ${msg}`);
+                if (this.isGoogleAuthFailure(err)) {
+                    if (/invalid[_\s-]?grant|revoked/i.test(msg)) {
+                        await this.markCalendarDisconnected(userId, msg);
+                    } else {
+                        await this.markCalendarExpired(userId, msg);
+                    }
+                } else {
+                    await this.usersService.updateGoogleCalendarStatus(
+                        userId,
+                        GOOGLE_CALENDAR_STATUSES.ERROR,
+                    );
+                }
                 return null;
             }
         }
 
         const calendar = google.calendar({ version: 'v3', auth: oauth2 });
+        await this.usersService.updateGoogleCalendarStatus(userId, GOOGLE_CALENDAR_STATUSES.CONNECTED, {
+            lastSyncAt: new Date(),
+        });
         return { calendar, calendarId: calendarIdRaw };
     }
 
@@ -164,7 +269,18 @@ export class GoogleCalendarService {
     /** True when the user has stored Google OAuth tokens (Calendar scope). */
     async hasLinkedCalendar(userId: string): Promise<boolean> {
         const creds = await this.usersService.getGoogleOAuthCalendarCredentials(userId);
-        return !!(creds?.googleRefreshToken || creds?.googleAccessToken);
+        const hasTokens = !!(creds?.googleRefreshToken || creds?.googleAccessToken);
+        if (!hasTokens && creds?.googleCalendarStatus !== GOOGLE_CALENDAR_STATUSES.DISCONNECTED) {
+            await this.usersService.updateGoogleCalendarStatus(userId, GOOGLE_CALENDAR_STATUSES.DISCONNECTED);
+        }
+        return hasTokens;
+    }
+
+    async getCalendarStatus(userId: string): Promise<string> {
+        const creds = await this.usersService.getGoogleOAuthCalendarCredentials(userId);
+        const hasTokens = !!(creds?.googleRefreshToken || creds?.googleAccessToken);
+        if (!hasTokens) return GOOGLE_CALENDAR_STATUSES.DISCONNECTED;
+        return creds?.googleCalendarStatus ?? GOOGLE_CALENDAR_STATUSES.CONNECTED;
     }
 
     /** Busy intervals on the user's linked Google calendar (see `googleCalendarId`, default `primary`). */
@@ -193,6 +309,13 @@ export class GoogleCalendarService {
         } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
             this.logger.warn(`Google Calendar freebusy failed for user ${userId}: ${msg}`);
+            if (this.isGoogleAuthFailure(err)) {
+                if (/invalid[_\s-]?grant|revoked/i.test(msg)) {
+                    await this.markCalendarDisconnected(userId, msg);
+                } else {
+                    await this.markCalendarExpired(userId, msg);
+                }
+            }
             return [];
         }
     }
@@ -267,6 +390,13 @@ export class GoogleCalendarService {
         } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
             this.logger.warn(`replaceOpenAvailabilityMarkers list/delete failed (${hostUserId}): ${msg}`);
+            if (this.isGoogleAuthFailure(err)) {
+                if (/invalid[_\s-]?grant|revoked/i.test(msg)) {
+                    await this.markCalendarDisconnected(hostUserId, msg);
+                } else {
+                    await this.markCalendarExpired(hostUserId, msg);
+                }
+            }
             return { deleted, inserted: 0 };
         }
 
@@ -328,6 +458,13 @@ export class GoogleCalendarService {
                     } catch (insErr: unknown) {
                         const m = insErr instanceof Error ? insErr.message : String(insErr);
                         this.logger.warn(`replaceOpenAvailabilityMarkers insert failed (${hostUserId}): ${m}`);
+                        if (this.isGoogleAuthFailure(insErr)) {
+                            if (/invalid[_\s-]?grant|revoked/i.test(m)) {
+                                await this.markCalendarDisconnected(hostUserId, m);
+                            } else {
+                                await this.markCalendarExpired(hostUserId, m);
+                            }
+                        }
                     }
                 }),
             );
@@ -401,6 +538,15 @@ export class GoogleCalendarService {
         } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
             this.logger.warn(`Google Calendar createEvent failed for user ${userId}: ${msg}`);
+            if (this.isGoogleAuthFailure(err)) {
+                if (/invalid[_\s-]?grant|revoked/i.test(msg)) {
+                    await this.markCalendarDisconnected(userId, msg);
+                } else {
+                    await this.markCalendarExpired(userId, msg);
+                }
+            } else {
+                await this.usersService.updateGoogleCalendarStatus(userId, GOOGLE_CALENDAR_STATUSES.ERROR);
+            }
             return { ok: false, reason: 'calendar_error', message: msg };
         }
     }
@@ -430,6 +576,13 @@ export class GoogleCalendarService {
         } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
             this.logger.warn(`Google Calendar updateEvent failed for user ${userId}: ${msg}`);
+            if (this.isGoogleAuthFailure(err)) {
+                if (/invalid[_\s-]?grant|revoked/i.test(msg)) {
+                    await this.markCalendarDisconnected(userId, msg);
+                } else {
+                    await this.markCalendarExpired(userId, msg);
+                }
+            }
             return false;
         }
     }
@@ -449,6 +602,13 @@ export class GoogleCalendarService {
         } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
             this.logger.warn(`Google Calendar deleteEvent failed for user ${userId}: ${msg}`);
+            if (this.isGoogleAuthFailure(err)) {
+                if (/invalid[_\s-]?grant|revoked/i.test(msg)) {
+                    await this.markCalendarDisconnected(userId, msg);
+                } else {
+                    await this.markCalendarExpired(userId, msg);
+                }
+            }
             return false;
         }
     }

@@ -6,6 +6,10 @@ import {
   USER_STATUSES,
   VALID_USER_STATUSES,
 } from '../../../common/constants/status.constants';
+import {
+  GOOGLE_CALENDAR_STATUSES,
+  VALID_GOOGLE_CALENDAR_STATUSES,
+} from '../../../common/constants/google-calendar.constants';
 
 export type UserDocument = Document<unknown, {}, User> &
   User & {
@@ -93,6 +97,21 @@ export class User {
   /** Google Calendar ID for CCC sync (e.g. `primary`, or a calendar email). Default `primary` when unset. */
   @Prop()
   googleCalendarId?: string;
+
+  @Prop({
+    enum: VALID_GOOGLE_CALENDAR_STATUSES,
+    default: GOOGLE_CALENDAR_STATUSES.DISCONNECTED,
+  })
+  googleCalendarStatus?: string;
+
+  @Prop()
+  googleCalendarConnectedAt?: Date;
+
+  @Prop()
+  googleCalendarLastSyncAt?: Date;
+
+  @Prop()
+  googleCalendarEmail?: string;
 
   @Prop({ type: [String], default: [] })
   fcmTokens: string[];

@@ -1,4 +1,5 @@
-import { IsString, IsEmail, IsBoolean, IsOptional, IsDate, IsMongoId, IsArray, ArrayMinSize } from 'class-validator';
+import { IsString, IsEmail, IsBoolean, IsOptional, IsDate, IsMongoId, IsArray, ArrayMinSize, IsEnum } from 'class-validator';
+import { VALID_GOOGLE_CALENDAR_STATUSES } from '../../../common/constants/google-calendar.constants';
 
 export class FieldMentorInvitationResponseDto {
     @IsMongoId()
@@ -60,6 +61,22 @@ export class UserResponseDto {
     @IsString()
     @IsOptional()
     zoomUserId?: string;
+
+    @IsOptional()
+    @IsEnum(VALID_GOOGLE_CALENDAR_STATUSES)
+    googleCalendarStatus?: string;
+
+    @IsOptional()
+    @IsDate()
+    googleCalendarConnectedAt?: Date;
+
+    @IsOptional()
+    @IsDate()
+    googleCalendarLastSyncAt?: Date;
+
+    @IsOptional()
+    @IsString()
+    googleCalendarEmail?: string;
 
     @IsDate()
     createdAt: Date;

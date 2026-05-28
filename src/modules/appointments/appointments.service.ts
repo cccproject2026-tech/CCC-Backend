@@ -2044,21 +2044,25 @@ export class AppointmentsService {
         }
 
         const mentorLinked = await this.googleCalendarService.hasLinkedCalendar(mentorId);
+        const mentorCalendarStatus = await this.googleCalendarService.getCalendarStatus(mentorId);
         const mentorBusy = await this.googleCalendarService.listBusyIntervals(mentorId, rangeStart, rangeEnd);
 
         let participant:
             | {
                   userId: string;
                   googleCalendarLinked: boolean;
+                  googleCalendarStatus?: string;
                   busyIntervals: { start: string; end: string }[];
               }
             | undefined;
 
         const pid = opts?.participantUserId?.trim();
         if (pid && Types.ObjectId.isValid(pid)) {
+            const participantCalendarStatus = await this.googleCalendarService.getCalendarStatus(pid);
             participant = {
                 userId: pid,
                 googleCalendarLinked: await this.googleCalendarService.hasLinkedCalendar(pid),
+                googleCalendarStatus: participantCalendarStatus,
                 busyIntervals: (
                     await this.googleCalendarService.listBusyIntervals(pid, rangeStart, rangeEnd)
                 ).map((b) => ({ start: b.start.toISOString(), end: b.end.toISOString() })),
@@ -2072,6 +2076,7 @@ export class AppointmentsService {
             google: {
                 mentor: {
                     googleCalendarLinked: mentorLinked,
+                    googleCalendarStatus: mentorCalendarStatus,
                     busyIntervals: mentorBusy.map((b) => ({
                         start: b.start.toISOString(),
                         end: b.end.toISOString(),

@@ -3,6 +3,7 @@ import { Type } from 'class-transformer';
 import { Types } from 'mongoose';
 import { ROLES } from '../../../common/constants/roles.constants';
 import { USER_STATUSES } from '../../../common/constants/status.constants';
+import { VALID_GOOGLE_CALENDAR_STATUSES } from '../../../common/constants/google-calendar.constants';
 
 const VALID_ROLES = Object.values(ROLES);
 const VALID_USER_STATUSES_ARRAY = Object.values(USER_STATUSES);
@@ -75,4 +76,22 @@ export class CreateUserDto {
     @IsOptional()
     @IsString()
     googleCalendarId?: string;
+
+    @IsOptional()
+    @IsEnum(VALID_GOOGLE_CALENDAR_STATUSES)
+    googleCalendarStatus?: string;
+
+    @IsOptional()
+    @Type(() => Date)
+    @IsDate()
+    googleCalendarConnectedAt?: Date;
+
+    @IsOptional()
+    @Type(() => Date)
+    @IsDate()
+    googleCalendarLastSyncAt?: Date;
+
+    @IsOptional()
+    @IsString()
+    googleCalendarEmail?: string;
 }

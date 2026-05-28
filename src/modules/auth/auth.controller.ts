@@ -12,7 +12,7 @@ import {
     Res,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import type { Response } from 'express';
+import type { Request, Response } from 'express';
 import { AuthService } from './auth.service';
 import { LoginDto, LoginResponseDto } from './dto/login.dto';
 import { SendOtpDto, VerifyOtpDto } from './dto/otp.dto';
@@ -155,7 +155,7 @@ export class AuthController {
     @UseGuards(JwtAuthGuard)
     @Get('google')
     getGoogleAuthUrl(
-        @Req() req: { user?: { userId?: string } },
+        @Req() req: Request & { user?: { userId?: string } },
         @Query('userId') userIdQuery?: string,
     ) {
         const userId = req.user?.userId;
@@ -167,6 +167,10 @@ export class AuthController {
         }
 
         const url = this.authService.getGoogleAuthUrl(userId);
+        const parsed = new URL(url);
+        this.logger.log(
+            `OAuth bootstrap: user=${userId}, redirect_uri=${parsed.searchParams.get('redirect_uri')}, callback=${this.configService.get<string>('GOOGLE_REDIRECT_URI') ?? ''}`,
+        );
 
         return {
             success: true,
@@ -183,6 +187,7 @@ export class AuthController {
      */
     @Get('google/callback')
     async googleOAuthCallback(
+        @Req() req: Request,
         @Query('code') code: string | undefined,
         @Query('state') state: string | undefined,
         @Query('error') oauthError: string | undefined,
@@ -192,6 +197,9 @@ export class AuthController {
         const baseRedirectRaw = (
             this.configService.get<string>('googleCalendarOAuth.successRedirectUrl') || ''
         ).trim();
+        this.logger.log(
+            `OAuth callback hit: request_url=${req.originalUrl}, callback_env=${this.configService.get<string>('GOOGLE_REDIRECT_URI') ?? ''}`,
+        );
 
         const withCalendarParams = (base: string, params: Record<string, string>): string => {
             const u = new URL(base);

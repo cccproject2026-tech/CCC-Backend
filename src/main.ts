@@ -18,6 +18,9 @@ async function bootstrap() {
   const configService = app.get(ConfigService);
   const nodeEnv = configService.get<string>('nodeEnv', 'development');
   const port = configService.get<number>('port', 3000);
+  const googleRedirectUri = configService.get<string>('GOOGLE_REDIRECT_URI', '');
+  const googleClientId = configService.get<string>('GOOGLE_CLIENT_ID', '');
+  const googleClientSecret = configService.get<string>('GOOGLE_CLIENT_SECRET', '');
   const allowedOrigins = configService.get<string[]>('allowedOrigins', [
     'http://localhost:3000',
     'http://localhost:3001',
@@ -122,6 +125,11 @@ async function bootstrap() {
   logger.log(`Server running on: http://localhost:${port}`);
   logger.log(`API Base URL: http://localhost:${port}/api/v1`);
   logger.log(`Health Check: http://localhost:${port}/health`);
+  logger.log(
+    `Google OAuth env: redirect_uri=${googleRedirectUri || '<missing>'}, client_id_present=${Boolean(
+      googleClientId?.trim(),
+    )}, client_secret_present=${Boolean(googleClientSecret?.trim())}`,
+  );
   logger.log(`=================================================`);
 }
 
