@@ -57,6 +57,7 @@ import {
 @Injectable()
 export class AppointmentsService {
     private readonly logger = new Logger(AppointmentsService.name);
+    private static readonly IST_OFFSET_MINUTES = 330;
 
     constructor(
         @InjectModel(Appointment.name) private appointmentModel: Model<AppointmentDocument>,
@@ -293,24 +294,34 @@ export class AppointmentsService {
     ): Promise<HourSlot[]> {
         if (!slots.length) return [];
 
-        const rangeStart = new Date(`${dateStr}T00:00:00.000Z`);
-        const rangeEnd = new Date(`${dateStr}T23:59:59.999Z`);
-        const scanEnd = new Date(rangeEnd.getTime() + durationMinutes * 60000);
+        const { dayStartUtc, scanEndUtc } = this.getIstDayUtcScanRange(dateStr, durationMinutes);
 
         let mentorBusy = await this.googleCalendarService.listBusyIntervals(
             mentorIdStr,
-            rangeStart,
-            scanEnd,
+            dayStartUtc,
+            scanEndUtc,
         );
 
         let pastorBusy =
             participantUserIdStr && Types.ObjectId.isValid(participantUserIdStr)
                 ? await this.googleCalendarService.listBusyIntervals(
                       participantUserIdStr,
-                      rangeStart,
-                      scanEnd,
+                      dayStartUtc,
+                      scanEndUtc,
                   )
                 : [];
+
+        this.logger.debug(
+            `[GoogleBusy] date=${dateStr} range_utc=${dayStartUtc.toISOString()}..${scanEndUtc.toISOString()} mentor_busy_count=${mentorBusy.length} participant_busy_count=${pastorBusy.length}`,
+        );
+        this.logger.debug(
+            `[GoogleBusy] mentor_busy_intervals=${mentorBusy.map((b) => `${b.start.toISOString()}..${b.end.toISOString()}`).join(', ') || 'none'}`,
+        );
+        if (participantUserIdStr && Types.ObjectId.isValid(participantUserIdStr)) {
+            this.logger.debug(
+                `[GoogleBusy] participant_busy_intervals=${pastorBusy.map((b) => `${b.start.toISOString()}..${b.end.toISOString()}`).join(', ') || 'none'}`,
+            );
+        }
 
         if (excludeAppointment) {
             const gap = { start: excludeAppointment.meetingDate, end: excludeAppointment.endTime };
@@ -319,18 +330,61 @@ export class AppointmentsService {
         }
 
         return slots.filter((slot) => {
-            const slotStart = buildSlotDate(dateStr, slot);
+            const slotStart = this.buildIstSlotStartUtc(dateStr, slot);
             const slotEnd = new Date(slotStart.getTime() + durationMinutes * 60000);
-            if (intervalOverlapsBusy(slotStart, slotEnd, mentorBusy)) return false;
-            if (
+            const mentorOverlap = intervalOverlapsBusy(slotStart, slotEnd, mentorBusy);
+            const participantOverlap =
                 participantUserIdStr &&
                 Types.ObjectId.isValid(participantUserIdStr) &&
-                intervalOverlapsBusy(slotStart, slotEnd, pastorBusy)
-            ) {
-                return false;
-            }
-            return true;
+                intervalOverlapsBusy(slotStart, slotEnd, pastorBusy);
+            const keep = !mentorOverlap && !participantOverlap;
+            this.logger.debug(
+                `[GoogleBusy] slot=${slot.startTime} ${slot.startPeriod}-${slot.endTime} ${slot.endPeriod} normalized_utc=${slotStart.toISOString()}..${slotEnd.toISOString()} mentor_overlap=${mentorOverlap} participant_overlap=${Boolean(participantOverlap)} keep=${keep}`,
+            );
+            return keep;
         });
+    }
+
+    private getIstDayUtcScanRange(dateStr: string, durationMinutes: number): {
+        dayStartUtc: Date;
+        scanEndUtc: Date;
+    } {
+        const [y, m, d] = dateStr.split('-').map((x) => Number(x));
+        if (!y || !m || !d) {
+            throw new BadRequestException(`Invalid date key: ${dateStr}`);
+        }
+        const dayStartUtc = new Date(
+            Date.UTC(y, m - 1, d, 0, 0, 0, 0) -
+                AppointmentsService.IST_OFFSET_MINUTES * 60_000,
+        );
+        const dayEndUtc = new Date(dayStartUtc.getTime() + 24 * 60 * 60 * 1000 - 1);
+        const scanEndUtc = new Date(dayEndUtc.getTime() + durationMinutes * 60_000);
+        return { dayStartUtc, scanEndUtc };
+    }
+
+    private buildIstSlotStartUtc(dateStr: string, slot: HourSlot): Date {
+        const [y, m, d] = dateStr.split('-').map((x) => Number(x));
+        if (!y || !m || !d) {
+            throw new BadRequestException(`Invalid date key: ${dateStr}`);
+        }
+        const hour12 = parseInt(slot.startTime, 10);
+        if (!Number.isFinite(hour12)) {
+            throw new BadRequestException(`Invalid slot start time: ${slot.startTime}`);
+        }
+        const minutePart = slot.startTime.includes(':') ? Number(slot.startTime.split(':')[1]) : 0;
+        if (!Number.isFinite(minutePart)) {
+            throw new BadRequestException(`Invalid slot start minutes: ${slot.startTime}`);
+        }
+        const hour24 =
+            slot.startPeriod === 'PM'
+                ? (hour12 % 12) + 12
+                : hour12 === 12
+                  ? 0
+                  : hour12;
+        return new Date(
+            Date.UTC(y, m - 1, d, hour24, minutePart, 0, 0) -
+                AppointmentsService.IST_OFFSET_MINUTES * 60_000,
+        );
     }
 
     private async syncGoogleCalendarAfterBooking(params: {
