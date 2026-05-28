@@ -505,7 +505,7 @@ export class GoogleCalendarService {
                             calendarId,
                             sendUpdates: 'none',
                             requestBody: {
-                                summary: '[CCC] Open — book via app',
+                                summary: 'CCC Available Slot',
                                 description:
                                     'Mirror of CCC availability. External Google busy times still hide slots in the app; booking consumes the slot.',
                                 transparency: 'transparent',
