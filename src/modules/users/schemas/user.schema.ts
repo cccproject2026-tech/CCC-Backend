@@ -113,7 +113,7 @@ export class User {
   @Prop()
   googleCalendarEmail?: string;
 
-  @Prop()
+  @Prop({ type: String, default: null })
   googleCalendarLastError?: string | null;
 
   @Prop({ type: [String], default: [] })
