@@ -78,6 +78,10 @@ export class UserResponseDto {
     @IsString()
     googleCalendarEmail?: string;
 
+    @IsOptional()
+    @IsString()
+    googleCalendarLastError?: string;
+
     @IsDate()
     createdAt: Date;
 

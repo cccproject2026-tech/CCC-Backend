@@ -125,13 +125,16 @@ export class GoogleCalendarService {
     private async markCalendarDisconnected(userId: string, reason: string): Promise<void> {
         this.logger.warn(`Google Calendar disconnected for user ${userId}: ${reason}`);
         await this.usersService.updateGoogleCalendarStatus(userId, GOOGLE_CALENDAR_STATUSES.DISCONNECTED, {
+            lastError: reason,
             clearTokens: true,
         });
     }
 
     private async markCalendarExpired(userId: string, reason: string): Promise<void> {
         this.logger.warn(`Google Calendar token expired for user ${userId}: ${reason}`);
-        await this.usersService.updateGoogleCalendarStatus(userId, GOOGLE_CALENDAR_STATUSES.EXPIRED);
+        await this.usersService.updateGoogleCalendarStatus(userId, GOOGLE_CALENDAR_STATUSES.EXPIRED, {
+            lastError: reason,
+        });
     }
 
     /**
@@ -151,6 +154,7 @@ export class GoogleCalendarService {
             access_type: 'offline',
             scope,
             prompt: 'consent',
+            include_granted_scopes: true,
             state,
         });
 
@@ -173,14 +177,34 @@ export class GoogleCalendarService {
         access_token?: string;
         refresh_token?: string;
         expiry_date?: number;
+        email?: string;
     }> {
         const client = this.createBareOAuth2Client();
         const { tokens } = await client.getToken(code);
+        const email = this.extractEmailFromIdToken(tokens.id_token ?? undefined);
+        this.logger.log(
+            `Google token exchange result: access_token=${Boolean(tokens.access_token)}, refresh_token=${Boolean(tokens.refresh_token)}, expiry_date=${tokens.expiry_date ?? 'none'}`,
+        );
         return {
             access_token: tokens.access_token ?? undefined,
             refresh_token: tokens.refresh_token ?? undefined,
             expiry_date: tokens.expiry_date ?? undefined,
+            email,
         };
+    }
+
+    private extractEmailFromIdToken(idToken?: string): string | undefined {
+        if (!idToken) return undefined;
+        try {
+            const parts = idToken.split('.');
+            if (parts.length < 2) return undefined;
+            const payloadB64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+            const payloadJson = Buffer.from(payloadB64, 'base64').toString('utf8');
+            const parsed = JSON.parse(payloadJson) as { email?: unknown };
+            return typeof parsed.email === 'string' && parsed.email.trim() ? parsed.email.trim() : undefined;
+        } catch {
+            return undefined;
+        }
     }
 
     /**
@@ -191,8 +215,12 @@ export class GoogleCalendarService {
         calendarId: string;
     } | null> {
         const creds = await this.usersService.getGoogleOAuthCalendarCredentials(userId);
+        this.logger.debug(
+            `Google OAuth credentials loaded for user ${userId}: access_token=${Boolean(creds?.googleAccessToken)}, refresh_token=${Boolean(creds?.googleRefreshToken)}, expiry=${creds?.googleTokenExpiry ?? 'none'}`,
+        );
 
         if (!creds?.googleRefreshToken && !creds?.googleAccessToken) {
+            this.logger.warn(`Google disconnect reason for user ${userId}: missing both access and refresh tokens`);
             if (creds?.googleCalendarStatus !== GOOGLE_CALENDAR_STATUSES.DISCONNECTED) {
                 await this.usersService.updateGoogleCalendarStatus(
                     userId,
@@ -221,6 +249,9 @@ export class GoogleCalendarService {
         if (needsRefresh) {
             try {
                 const { credentials } = await oauth2.refreshAccessToken();
+                this.logger.log(
+                    `Google token refresh success for user ${userId}: access_token=${Boolean(credentials.access_token)}, refresh_token=${Boolean(credentials.refresh_token)}, expiry_date=${credentials.expiry_date ?? 'none'}`,
+                );
                 const patch: Record<string, unknown> = {};
                 if (credentials.access_token) patch.googleAccessToken = credentials.access_token;
                 if (credentials.expiry_date != null) patch.googleTokenExpiry = credentials.expiry_date;
@@ -232,9 +263,19 @@ export class GoogleCalendarService {
                     refresh_token: credentials.refresh_token ?? creds.googleRefreshToken,
                     expiry_date: credentials.expiry_date ?? creds.googleTokenExpiry,
                 });
+                await this.usersService.updateGoogleCalendarStatus(
+                    userId,
+                    GOOGLE_CALENDAR_STATUSES.CONNECTED,
+                    {
+                        lastSyncAt: new Date(),
+                        lastError: null,
+                    },
+                );
             } catch (err: unknown) {
                 const msg = err instanceof Error ? err.message : String(err);
-                this.logger.warn(`Google OAuth refresh failed for user ${userId}: ${msg}`);
+                this.logger.warn(
+                    `Google token refresh failed for user ${userId}: ${msg}; has_stored_refresh_token=${Boolean(creds.googleRefreshToken)}`,
+                );
                 if (this.isGoogleAuthFailure(err)) {
                     if (/invalid[_\s-]?grant|revoked/i.test(msg)) {
                         await this.markCalendarDisconnected(userId, msg);
@@ -245,6 +286,7 @@ export class GoogleCalendarService {
                     await this.usersService.updateGoogleCalendarStatus(
                         userId,
                         GOOGLE_CALENDAR_STATUSES.ERROR,
+                        { lastError: msg },
                     );
                 }
                 return null;
@@ -254,6 +296,7 @@ export class GoogleCalendarService {
         const calendar = google.calendar({ version: 'v3', auth: oauth2 });
         await this.usersService.updateGoogleCalendarStatus(userId, GOOGLE_CALENDAR_STATUSES.CONNECTED, {
             lastSyncAt: new Date(),
+            lastError: null,
         });
         return { calendar, calendarId: calendarIdRaw };
     }
@@ -281,6 +324,30 @@ export class GoogleCalendarService {
         const hasTokens = !!(creds?.googleRefreshToken || creds?.googleAccessToken);
         if (!hasTokens) return GOOGLE_CALENDAR_STATUSES.DISCONNECTED;
         return creds?.googleCalendarStatus ?? GOOGLE_CALENDAR_STATUSES.CONNECTED;
+    }
+
+    async getConnectionStatus(userId: string): Promise<{
+        connected: boolean;
+        status: string;
+        email: string | null;
+        connectedAt: Date | null;
+        lastSyncAt: Date | null;
+        lastError: string | null;
+    }> {
+        const creds = await this.usersService.getGoogleOAuthCalendarCredentials(userId);
+        const hasTokens = !!(creds?.googleRefreshToken || creds?.googleAccessToken);
+        const status = hasTokens
+            ? creds?.googleCalendarStatus ?? GOOGLE_CALENDAR_STATUSES.CONNECTED
+            : GOOGLE_CALENDAR_STATUSES.DISCONNECTED;
+
+        return {
+            connected: status === GOOGLE_CALENDAR_STATUSES.CONNECTED,
+            status,
+            email: creds?.googleCalendarEmail ?? null,
+            connectedAt: creds?.googleCalendarConnectedAt ?? null,
+            lastSyncAt: creds?.googleCalendarLastSyncAt ?? null,
+            lastError: creds?.googleCalendarLastError ?? null,
+        };
     }
 
     /** Busy intervals on the user's linked Google calendar (see `googleCalendarId`, default `primary`). */
@@ -545,7 +612,9 @@ export class GoogleCalendarService {
                     await this.markCalendarExpired(userId, msg);
                 }
             } else {
-                await this.usersService.updateGoogleCalendarStatus(userId, GOOGLE_CALENDAR_STATUSES.ERROR);
+                await this.usersService.updateGoogleCalendarStatus(userId, GOOGLE_CALENDAR_STATUSES.ERROR, {
+                    lastError: msg,
+                });
             }
             return { ok: false, reason: 'calendar_error', message: msg };
         }

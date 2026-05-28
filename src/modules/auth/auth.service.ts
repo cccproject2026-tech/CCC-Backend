@@ -236,10 +236,19 @@ export class AuthService {
             const tokens = await this.googleService.getTokens(code);
             /** `findById` strips OAuth fields from the payload; must read secrets from DB separately. */
             const existingOAuth = await this.usersService.getGoogleOAuthCalendarCredentials(userId);
+            this.logger.log(
+                `Google callback token exchange for user ${userId}: access_token=${Boolean(tokens.access_token)}, refresh_token=${Boolean(tokens.refresh_token)}, existing_refresh_token=${Boolean(existingOAuth?.googleRefreshToken)}`,
+            );
+
+            if (!tokens.access_token) {
+                throw new BadRequestException(
+                    'Google OAuth exchange returned no access token. Please try linking again.',
+                );
+            }
 
             const nextRefreshToken = tokens.refresh_token ?? existingOAuth?.googleRefreshToken;
             await this.usersService.update(userId, {
-                googleAccessToken: tokens.access_token ?? undefined,
+                googleAccessToken: tokens.access_token,
                 ...(nextRefreshToken !== undefined && nextRefreshToken !== null
                     ? { googleRefreshToken: nextRefreshToken }
                     : {}),
@@ -247,12 +256,21 @@ export class AuthService {
                 googleCalendarStatus: GOOGLE_CALENDAR_STATUSES.CONNECTED,
                 googleCalendarConnectedAt: existingOAuth?.googleCalendarConnectedAt ?? new Date(),
                 googleCalendarLastSyncAt: new Date(),
+                googleCalendarEmail: tokens.email ?? existingOAuth?.googleCalendarEmail ?? undefined,
+                googleCalendarLastError: null,
             });
+            this.logger.log(
+                `Google Calendar tokens persisted for user ${userId}: access_token=true, refresh_token=${Boolean(nextRefreshToken)}`,
+            );
             this.logger.log(`Google Calendar connected for user ${userId}`);
             return true;
         } catch (err: unknown) {
-            await this.usersService.updateGoogleCalendarStatus(userId, GOOGLE_CALENDAR_STATUSES.ERROR);
             const msg = err instanceof Error ? err.message : String(err);
+            await this.usersService.updateGoogleCalendarStatus(
+                userId,
+                GOOGLE_CALENDAR_STATUSES.ERROR,
+                { lastError: msg },
+            );
             this.logger.warn(`Google token exchange failed for user ${userId}: ${msg}`);
             throw err;
         }

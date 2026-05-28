@@ -207,11 +207,12 @@ export class UsersService {
         googleCalendarConnectedAt?: Date;
         googleCalendarLastSyncAt?: Date;
         googleCalendarEmail?: string;
+        googleCalendarLastError?: string;
     } | null> {
         const u = await this.userModel
             .findById(userId)
             .select(
-                'googleAccessToken googleRefreshToken googleTokenExpiry googleCalendarId googleCalendarStatus googleCalendarConnectedAt googleCalendarLastSyncAt googleCalendarEmail',
+                'googleAccessToken googleRefreshToken googleTokenExpiry googleCalendarId googleCalendarStatus googleCalendarConnectedAt googleCalendarLastSyncAt googleCalendarEmail googleCalendarLastError',
             )
             .lean()
             .exec();
@@ -225,6 +226,7 @@ export class UsersService {
             googleCalendarConnectedAt: u.googleCalendarConnectedAt ?? undefined,
             googleCalendarLastSyncAt: u.googleCalendarLastSyncAt ?? undefined,
             googleCalendarEmail: u.googleCalendarEmail ?? undefined,
+            googleCalendarLastError: u.googleCalendarLastError ?? undefined,
         };
     }
 
@@ -235,6 +237,7 @@ export class UsersService {
             connectedAt?: Date | null;
             lastSyncAt?: Date | null;
             googleCalendarEmail?: string | null;
+            lastError?: string | null;
             clearTokens?: boolean;
         },
     ): Promise<void> {
@@ -251,6 +254,9 @@ export class UsersService {
         if (extras?.googleCalendarEmail !== undefined) {
             patch.googleCalendarEmail = extras.googleCalendarEmail;
         }
+        if (extras?.lastError !== undefined) {
+            patch.googleCalendarLastError = extras.lastError;
+        }
         if (extras?.clearTokens) {
             patch.googleAccessToken = null;
             patch.googleRefreshToken = null;
@@ -265,6 +271,7 @@ export class UsersService {
             .findByIdAndUpdate(userId, {
                 googleCalendarLastSyncAt: at,
                 googleCalendarStatus: GOOGLE_CALENDAR_STATUSES.CONNECTED,
+                googleCalendarLastError: null,
             })
             .exec();
     }

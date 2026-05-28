@@ -113,6 +113,9 @@ export class User {
   @Prop()
   googleCalendarEmail?: string;
 
+  @Prop()
+  googleCalendarLastError?: string;
+
   @Prop({ type: [String], default: [] })
   fcmTokens: string[];
 
