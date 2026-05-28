@@ -22,7 +22,7 @@ export function toUserResponseDto(user: UserDocument | any): UserResponseDto {
         googleCalendarConnectedAt: user.googleCalendarConnectedAt || undefined,
         googleCalendarLastSyncAt: user.googleCalendarLastSyncAt || undefined,
         googleCalendarEmail: user.googleCalendarEmail || undefined,
-        googleCalendarLastError: user.googleCalendarLastError || undefined,
+        googleCalendarLastError: user.googleCalendarLastError ?? null,
         createdAt: user.createdAt,
         updatedAt: user.updatedAt,
         assignedId: user.assignedId,

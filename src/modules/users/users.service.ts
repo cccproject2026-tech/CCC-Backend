@@ -207,7 +207,7 @@ export class UsersService {
         googleCalendarConnectedAt?: Date;
         googleCalendarLastSyncAt?: Date;
         googleCalendarEmail?: string;
-        googleCalendarLastError?: string;
+        googleCalendarLastError?: string | null;
     } | null> {
         const u = await this.userModel
             .findById(userId)
@@ -226,7 +226,7 @@ export class UsersService {
             googleCalendarConnectedAt: u.googleCalendarConnectedAt ?? undefined,
             googleCalendarLastSyncAt: u.googleCalendarLastSyncAt ?? undefined,
             googleCalendarEmail: u.googleCalendarEmail ?? undefined,
-            googleCalendarLastError: u.googleCalendarLastError ?? undefined,
+            googleCalendarLastError: u.googleCalendarLastError ?? null,
         };
     }
 

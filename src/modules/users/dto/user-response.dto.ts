@@ -80,7 +80,7 @@ export class UserResponseDto {
 
     @IsOptional()
     @IsString()
-    googleCalendarLastError?: string;
+    googleCalendarLastError?: string | null;
 
     @IsDate()
     createdAt: Date;

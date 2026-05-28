@@ -97,5 +97,5 @@ export class CreateUserDto {
 
     @IsOptional()
     @IsString()
-    googleCalendarLastError?: string;
+    googleCalendarLastError?: string | null;
 }
