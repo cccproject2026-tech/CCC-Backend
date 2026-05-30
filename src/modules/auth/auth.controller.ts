@@ -14,6 +14,10 @@ import {
 import { ConfigService } from '@nestjs/config';
 import type { Request, Response } from 'express';
 import { AuthService } from './auth.service';
+import {
+    appendGoogleCalendarOAuthParams,
+    isOAuthRedirectTarget,
+} from './utils/google-oauth-redirect.util';
 import { LoginDto, LoginResponseDto } from './dto/login.dto';
 import { SendOtpDto, VerifyOtpDto } from './dto/otp.dto';
 import {
@@ -151,12 +155,19 @@ export class AuthController {
     /**
      * Builds Google authorize URL (`access_type=offline`, `prompt=consent`).
      * Call with **Bearer JWT**; optional `userId` query must match the authenticated user.
+     *
+     * Multi-client return URL:
+     * - `platform=web` (default) — `GOOGLE_OAUTH_SUCCESS_REDIRECT`
+     * - `platform=mobile` — `GOOGLE_OAUTH_MOBILE_SUCCESS_REDIRECT`
+     * - `redirectTo=<url>` — explicit allowlisted return URL (stored in signed `state`)
      */
     @UseGuards(JwtAuthGuard)
     @Get('google')
     getGoogleAuthUrl(
         @Req() req: Request & { user?: { userId?: string } },
         @Query('userId') userIdQuery?: string,
+        @Query('platform') platform?: string,
+        @Query('redirectTo') redirectTo?: string,
     ) {
         const userId = req.user?.userId;
         if (!userId) {
@@ -166,10 +177,10 @@ export class AuthController {
             throw new ForbiddenException('userId query must match the authenticated user.');
         }
 
-        const url = this.authService.getGoogleAuthUrl(userId);
+        const url = this.authService.getGoogleAuthUrl(userId, { platform, redirectTo });
         const parsed = new URL(url);
         this.logger.log(
-            `OAuth bootstrap: user=${userId}, redirect_uri=${parsed.searchParams.get('redirect_uri')}, callback=${this.configService.get<string>('GOOGLE_REDIRECT_URI') ?? ''}`,
+            `OAuth bootstrap: user=${userId}, platform=${platform || 'web'}, redirectTo=${Boolean(redirectTo?.trim())}, redirect_uri=${parsed.searchParams.get('redirect_uri')}, callback=${this.configService.get<string>('GOOGLE_REDIRECT_URI') ?? ''}`,
         );
 
         return {
@@ -183,7 +194,8 @@ export class AuthController {
 
     /**
      * OAuth redirect target (PUBLIC). Validates `state`, exchanges code, persists tokens,
-     * then redirects SPA to GOOGLE_OAUTH_SUCCESS_REDIRECT with `?googleCalendar=linked`.
+     * then redirects client to URL embedded in signed `state` (web or mobile), falling back
+     * to GOOGLE_OAUTH_SUCCESS_REDIRECT with `?googleCalendar=linked`.
      */
     @Get('google/callback')
     async googleOAuthCallback(
@@ -194,24 +206,31 @@ export class AuthController {
         @Query('error_description') errorDescription: string | undefined,
         @Res({ passthrough: false }) res: Response,
     ) {
-        const baseRedirectRaw = (
+        const envDefaultRedirect = (
             this.configService.get<string>('googleCalendarOAuth.successRedirectUrl') || ''
         ).trim();
+
+        const resolveClientRedirect = (): string => {
+            const fromState = state?.trim()
+                ? this.authService.resolveOAuthSuccessRedirectFromState(state.trim())
+                : null;
+            return (fromState || envDefaultRedirect).trim();
+        };
+
         this.logger.log(
             `OAuth callback hit: request_url=${req.originalUrl}, callback_env=${this.configService.get<string>('GOOGLE_REDIRECT_URI') ?? ''}`,
         );
 
-        const withCalendarParams = (base: string, params: Record<string, string>): string => {
-            const u = new URL(base);
-            for (const [k, v] of Object.entries(params)) {
-                u.searchParams.set(k, v);
-            }
-            return u.toString();
-        };
+        const redirectWithCalendarParams = (
+            base: string,
+            params: Record<string, string>,
+        ): string => appendGoogleCalendarOAuthParams(base, params);
+
+        const baseRedirectRaw = resolveClientRedirect();
 
         if (!baseRedirectRaw) {
             this.logger.error(
-                'GOOGLE_OAUTH_SUCCESS_REDIRECT / FRONTEND_SUCCESS_REDIRECT is not set — cannot redirect SPA after OAuth.',
+                'GOOGLE_OAUTH_SUCCESS_REDIRECT / FRONTEND_SUCCESS_REDIRECT is not set — cannot redirect client after OAuth.',
             );
             try {
                 if (oauthError) {
@@ -231,11 +250,11 @@ export class AuthController {
             }
         }
 
-        if (!/^https?:\/\//i.test(baseRedirectRaw)) {
+        if (!isOAuthRedirectTarget(baseRedirectRaw)) {
             return res
                 .status(500)
                 .send(
-                    'GOOGLE_OAUTH_SUCCESS_REDIRECT must be an absolute URL (e.g. https://app.example.com/mentor/schedule)',
+                    'OAuth success redirect must be an absolute http(s) URL or an allowed app deep link (e.g. cccpastormentor://oauth/google-calendar).',
                 );
         }
 
@@ -243,7 +262,7 @@ export class AuthController {
             if (oauthError) {
                 const reason = (errorDescription || oauthError).slice(0, 400);
                 return res.redirect(
-                    withCalendarParams(baseRedirectRaw, {
+                    redirectWithCalendarParams(baseRedirectRaw, {
                         googleCalendar: 'error',
                         reason,
                     }),
@@ -252,7 +271,7 @@ export class AuthController {
 
             if (!code?.trim() || !state?.trim()) {
                 return res.redirect(
-                    withCalendarParams(baseRedirectRaw, {
+                    redirectWithCalendarParams(baseRedirectRaw, {
                         googleCalendar: 'error',
                         reason: 'missing_code_or_state',
                     }),
@@ -262,7 +281,7 @@ export class AuthController {
             await this.authService.handleGoogleCallback(code.trim(), state.trim());
 
             return res.redirect(
-                withCalendarParams(baseRedirectRaw, {
+                redirectWithCalendarParams(baseRedirectRaw, {
                     googleCalendar: 'linked',
                 }),
             );
@@ -270,7 +289,7 @@ export class AuthController {
             const msg = err instanceof Error ? err.message : 'oauth_callback_failed';
             this.logger.warn(`Google OAuth callback: ${msg}`);
             return res.redirect(
-                withCalendarParams(baseRedirectRaw, {
+                redirectWithCalendarParams(baseRedirectRaw, {
                     googleCalendar: 'error',
                     reason: msg.slice(0, 240),
                 }),

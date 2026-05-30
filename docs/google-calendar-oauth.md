@@ -14,11 +14,29 @@ Canonical routes (global prefix **`/api/v1`**):
 | `GOOGLE_CLIENT_ID` | Yes | OAuth 2.0 Web client ID |
 | `GOOGLE_CLIENT_SECRET` | Yes | OAuth client secret |
 | `GOOGLE_REDIRECT_URI` | Yes | Exact callback URL, e.g. `https://api.example.com/api/v1/auth/google/callback` |
-| `GOOGLE_OAUTH_SUCCESS_REDIRECT` | Strongly recommended | SPA URL after success; query `googleCalendar=linked` is appended. Fallback: `FRONTEND_SUCCESS_REDIRECT`. |
+| `GOOGLE_OAUTH_SUCCESS_REDIRECT` | Strongly recommended | **Web** SPA URL after success; query `googleCalendar=linked` is appended. Fallback: `FRONTEND_SUCCESS_REDIRECT`. |
+| `GOOGLE_OAUTH_MOBILE_SUCCESS_REDIRECT` | Recommended for mobile | **Mobile** deep link after success (default `cccpastormentor://oauth/google-calendar`). Used when client calls `GET /auth/google?platform=mobile`. |
+| `GOOGLE_OAUTH_ALLOWED_REDIRECTS` | Optional | Comma-separated extra allowed return URLs (e.g. Expo dev `exp://…` links). Used to validate `redirectTo=` query param. |
 | `FRONTEND_SUCCESS_REDIRECT` | Optional | Used if `GOOGLE_OAUTH_SUCCESS_REDIRECT` is unset |
 | `JWT_SECRET` | Yes | Signs short-lived **`state`** (10m) embedded in authorize URL |
 
 On error, redirects use `?googleCalendar=error&reason=...`.
+
+### Multi-client return URLs (web + mobile, single backend)
+
+Clients choose where to land after Google consent. The chosen URL is stored in the signed OAuth **`state`** JWT (10 minutes).
+
+| Client | Bootstrap request | Post-OAuth redirect |
+|--------|-------------------|---------------------|
+| **ccc-web** | `GET /auth/google` (default `platform=web`) | `GOOGLE_OAUTH_SUCCESS_REDIRECT?googleCalendar=linked` |
+| **ccc-mobile** | `GET /auth/google?platform=mobile&redirectTo=<deep-link>` | `redirectTo` if allowlisted, else mobile default |
+
+Query params on **`GET /auth/google`** (Bearer JWT required):
+
+- **`platform`** — `web` (default) or `mobile`
+- **`redirectTo`** — optional explicit return URL; must match web origin allowlist or mobile deep-link allowlist (open redirects rejected)
+
+**Do not** replace `GOOGLE_OAUTH_SUCCESS_REDIRECT` with a mobile deep link — that would break ccc-web. Mobile uses `platform=mobile` or `redirectTo` instead.
 
 ### Google Cloud Console checklist
 

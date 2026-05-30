@@ -68,5 +68,12 @@ export default () => ({
             process.env.GOOGLE_OAUTH_SUCCESS_REDIRECT?.trim() ||
             process.env.FRONTEND_SUCCESS_REDIRECT?.trim() ||
             '',
+        mobileSuccessRedirectUrl:
+            process.env.GOOGLE_OAUTH_MOBILE_SUCCESS_REDIRECT?.trim() ||
+            'cccpastormentor://oauth/google-calendar',
+        allowedRedirectUrls: (process.env.GOOGLE_OAUTH_ALLOWED_REDIRECTS || '')
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean),
     },
 });

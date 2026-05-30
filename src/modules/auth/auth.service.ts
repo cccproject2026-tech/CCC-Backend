@@ -14,6 +14,12 @@ import { GoogleCalendarService } from '../google-calendar/google-calendar.servic
 import { Interest, InterestDocument } from '../interests/schemas/interest.schema';
 import { buildOnboardingStatusResponse } from './utils/onboarding-status.util';
 import { GOOGLE_CALENDAR_STATUSES } from '../../common/constants/google-calendar.constants';
+import {
+    assertAllowedOAuthSuccessRedirect,
+    GoogleCalendarOAuthRedirectConfig,
+    GoogleOAuthBootstrapOptions,
+    resolveOAuthSuccessRedirect,
+} from './utils/google-oauth-redirect.util';
 
 @Injectable()
 export class AuthService {
@@ -200,12 +206,60 @@ export class AuthService {
         return { success: true };
     }
 
-    getGoogleAuthUrl(userId: string): string {
+    private getGoogleCalendarOAuthRedirectConfig(): GoogleCalendarOAuthRedirectConfig {
+        return {
+            successRedirectUrl:
+                this.configService.get<string>('googleCalendarOAuth.successRedirectUrl') || '',
+            mobileSuccessRedirectUrl:
+                this.configService.get<string>('googleCalendarOAuth.mobileSuccessRedirectUrl') ||
+                'cccpastormentor://oauth/google-calendar',
+            allowedRedirectUrls:
+                this.configService.get<string[]>('googleCalendarOAuth.allowedRedirectUrls') || [],
+        };
+    }
+
+    getGoogleAuthUrl(userId: string, options?: GoogleOAuthBootstrapOptions): string {
+        const oauthSuccessRedirect = resolveOAuthSuccessRedirect(
+            this.getGoogleCalendarOAuthRedirectConfig(),
+            options,
+        );
+
         const state = this.jwtService.sign(
-            { sub: userId, googleCalendarOAuth: true },
+            {
+                sub: userId,
+                googleCalendarOAuth: true,
+                ...(oauthSuccessRedirect ? { oauthSuccessRedirect } : {}),
+            },
             { expiresIn: '10m' },
         );
         return this.googleService.getAuthUrl(state);
+    }
+
+    /**
+     * Reads validated client return URL embedded in OAuth state (if present).
+     * Used by the public callback to route web vs mobile clients.
+     */
+    resolveOAuthSuccessRedirectFromState(state: string): string | null {
+        if (!state?.trim()) {
+            return null;
+        }
+        try {
+            const payload = this.jwtService.verify<{
+                oauthSuccessRedirect?: string;
+                googleCalendarOAuth?: boolean;
+            }>(state.trim());
+            if (payload.googleCalendarOAuth !== true) {
+                return null;
+            }
+            const redirect = payload.oauthSuccessRedirect?.trim();
+            if (!redirect) {
+                return null;
+            }
+            assertAllowedOAuthSuccessRedirect(redirect, this.getGoogleCalendarOAuthRedirectConfig());
+            return redirect;
+        } catch {
+            return null;
+        }
     }
 
     /**
