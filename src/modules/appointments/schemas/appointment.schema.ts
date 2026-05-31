@@ -91,6 +91,14 @@ export class Appointment {
     @Prop()
     notes?: string;
 
+    /** Pastor-provided meeting subject shown in mentor/director meeting details. */
+    @Prop()
+    title?: string;
+
+    /** Pastor-provided meeting details / reason for booking. */
+    @Prop()
+    description?: string;
+
     @Prop({
         type: String,
         enum: VALID_APPOINTMENT_STATUSES,
@@ -213,5 +221,5 @@ AppointmentSchema.index({ status: 1, meetingDate: -1 });
 // Helps the cron query:
 // updateMany({ status: scheduled, endTime: { $lt: now } })
 AppointmentSchema.index({ status: 1, endTime: 1 });
-AppointmentSchema.index({ platform: 'text', status: 'text', notes: 'text' });
+AppointmentSchema.index({ platform: 'text', status: 'text', notes: 'text', title: 'text', description: 'text' });
 AppointmentSchema.index({ zoomMeetingId: 1 });

@@ -172,6 +172,16 @@ export class InterestController {
         };
     }
 
+    @Delete('by-id/:id')
+    async deleteById(@Param('id') id: string): Promise<BaseResponse<null>> {
+        await this.interestService.deleteById(id);
+        return {
+            success: true,
+            message: 'Interest form deleted successfully',
+            data: null,
+        };
+    }
+
     @Get('by-email/:email')
     async getByEmail(@Param('email') email: string): Promise<BaseResponse<InterestResponseDto>> {
         const data = await this.interestService.findByEmail(email);

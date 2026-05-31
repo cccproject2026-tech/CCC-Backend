@@ -27,6 +27,8 @@ type LooseAppointment = AppointmentDocument & {
     recordingUrl?: string | null;
     recordingStatus?: string;
     meetingLocation?: string | null;
+    title?: string;
+    description?: string;
     hostJoinedAt?: Date | null;
     joinAudit?: Array<{ at: Date; userId: Types.ObjectId | string; kind: string }>;
 };
@@ -84,6 +86,8 @@ export const toAppointmentResponseDto = (
         recordingStatus: appointment.recordingStatus ?? undefined,
         status: appointment.status,
         notes: appointment.notes,
+        title: appointment.title ?? undefined,
+        description: appointment.description ?? undefined,
 
         // Zoom meeting details
         zoomMeetingId: appointment.zoomMeetingId ?? undefined,

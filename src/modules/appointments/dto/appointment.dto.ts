@@ -45,6 +45,24 @@ export class CreateAppointmentDto {
 
     @IsOptional()
     @IsString()
+    title?: string;
+
+    @IsOptional()
+    @IsString()
+    description?: string;
+
+    /** Optional override for Google Calendar event title; falls back to `title` or default. */
+    @IsOptional()
+    @IsString()
+    googleCalendarTitle?: string;
+
+    /** Optional override for Google Calendar event description; falls back to `description` / `notes`. */
+    @IsOptional()
+    @IsString()
+    googleCalendarDescription?: string;
+
+    @IsOptional()
+    @IsString()
     initiatorRole?: string;
 
     /**
@@ -124,6 +142,8 @@ export class AppointmentResponseDto {
     recordingUrl?: string | null;
     recordingStatus?: string;
     notes?: string;
+    title?: string;
+    description?: string;
     status: string;
 
     zoomMeetingId?: string;

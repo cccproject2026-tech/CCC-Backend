@@ -946,6 +946,21 @@ export class AppointmentsService {
         const userName = userDoc ? `${userDoc.firstName || ''} ${userDoc.lastName || ''}`.trim() : 'Student';
         const mentorName = mentorDoc ? `${mentorDoc.firstName || ''} ${mentorDoc.lastName || ''}`.trim() : 'Mentor';
         const normalizedNotes = linkedAssessmentAssignmentId ? 'Assessment meeting' : dto.notes;
+        const meetingTitle = dto.title?.trim() || undefined;
+        const meetingDescription = dto.description?.trim() || undefined;
+        const defaultZoomTopic = `Mentoring Session: ${userName} with ${mentorName}`;
+        const zoomTopic = meetingTitle || defaultZoomTopic;
+        const zoomAgenda =
+            meetingDescription ||
+            normalizedNotes ||
+            `Scheduled mentoring session between ${userName} and ${mentorName}`;
+        const defaultGoogleCalendarTitle = `CCC meeting: ${userName} × ${mentorName}`;
+        const googleCalendarTitle =
+            dto.googleCalendarTitle?.trim() || meetingTitle || defaultGoogleCalendarTitle;
+        const googleCalendarDescription =
+            dto.googleCalendarDescription?.trim() ||
+            [meetingDescription, normalizedNotes].filter(Boolean).join('\n') ||
+            undefined;
         // Mode-aware creation keeps legacy ONLINE behavior while skipping Zoom for non-online.
         const sessionMode = this.normalizeSessionMode(dto.sessionMode);
         const shouldGenerateZoom = sessionMode === SESSION_MODES.ONLINE;
@@ -971,11 +986,11 @@ export class AppointmentsService {
                 }
 
                 const zoomResponse = await this.zoomService.createMeeting({
-                    topic: `Mentoring Session: ${userName} with ${mentorName}`,
+                    topic: zoomTopic,
                     startTime: finalStartDate.toISOString(),
                     duration: durationMinutes,
                     timezone: 'Asia/Kolkata',
-                    agenda: normalizedNotes || `Scheduled mentoring session between ${userName} and ${mentorName}`,
+                    agenda: zoomAgenda,
                     hostUserId: mentorZoomUserId,
                 });
 
@@ -1006,12 +1021,18 @@ export class AppointmentsService {
         const {
             initiatorRole: _initiatorRole,
             googleCalendarNonMentorUserId: _omitGcalFromSpread,
+            assessmentAssignmentId: _omitAssessmentAssignmentId,
+            isSessionBooking: _omitIsSessionBooking,
+            googleCalendarTitle: _omitGoogleCalendarTitle,
+            googleCalendarDescription: _omitGoogleCalendarDescription,
             ...appointmentFields
         } = dto;
 
         const appointment = new this.appointmentModel({
             ...appointmentFields,
             notes: normalizedNotes,
+            title: meetingTitle,
+            description: meetingDescription,
             meetingDate: finalStartDate,
             endTime: new Date(finalStartDate.getTime() + durationMinutes * 60000),
             userId: new Types.ObjectId(dto.userId),
@@ -1083,8 +1104,8 @@ export class AppointmentsService {
             nonMentorGoogleUserId: nonMentorGoogleUserIdStr,
             start: finalStartDate,
             end: new Date(finalStartDate.getTime() + durationMinutes * 60000),
-            topic: `CCC meeting: ${userName} × ${mentorName}`,
-            description: [normalizedNotes, meetingLink ? `Join: ${meetingLink}` : '']
+            topic: googleCalendarTitle,
+            description: [googleCalendarDescription, meetingLink ? `Join: ${meetingLink}` : '']
                 .filter(Boolean)
                 .join('\n'),
             mentorAttendeeEmail,
@@ -1354,6 +1375,12 @@ export class AppointmentsService {
         const durationMinutes = availability?.meetingDuration || 60;
         const userName = userDoc ? `${userDoc.firstName || ''} ${userDoc.lastName || ''}`.trim() : 'Student';
         const mentorName = mentorDoc ? `${mentorDoc.firstName || ''} ${mentorDoc.lastName || ''}`.trim() : 'Mentor';
+        const defaultZoomTopic = `Mentoring Session: ${userName} with ${mentorName}`;
+        const zoomTopic = appointment.title?.trim() || defaultZoomTopic;
+        const zoomAgenda =
+            appointment.description?.trim() ||
+            appointment.notes ||
+            `Scheduled mentoring session between ${userName} and ${mentorName}`;
 
         let mentorZoomUserId: string | undefined = mentorDoc?.zoomUserId || undefined;
         if (!mentorZoomUserId && mentorDoc?.email) {
@@ -1370,12 +1397,11 @@ export class AppointmentsService {
         }
 
         const zoomResponse = await this.zoomService.createMeeting({
-            topic: `Mentoring Session: ${userName} with ${mentorName}`,
+            topic: zoomTopic,
             startTime: new Date(appointment.meetingDate).toISOString(),
             duration: durationMinutes,
             timezone: 'Asia/Kolkata',
-            agenda:
-                appointment.notes || `Scheduled mentoring session between ${userName} and ${mentorName}`,
+            agenda: zoomAgenda,
             hostUserId: mentorZoomUserId,
         });
 
@@ -1528,7 +1554,12 @@ export class AppointmentsService {
     }
 
     async update(id: string, dto: UpdateAppointmentDto): Promise<AppointmentResponseDto> {
-        const { initiatorRole: _ir, ...updatePayload }: any = dto;
+        const {
+            initiatorRole: _ir,
+            googleCalendarTitle: _gct,
+            googleCalendarDescription: _gcd,
+            ...updatePayload
+        }: any = dto;
 
         const existing = await this.appointmentModel.findById(id).lean().exec();
         if (!existing) {

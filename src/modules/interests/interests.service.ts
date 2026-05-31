@@ -358,4 +358,22 @@ export class InterestService {
     if (!interest) throw new NotFoundException('Interest form not found');
     return toInterestResponseDto(interest);
   }
+
+  async deleteById(id: string): Promise<void> {
+    const interest = await this.interestModel.findById(id).exec();
+    if (!interest) throw new NotFoundException('Interest form not found');
+
+    if (interest.status !== USER_APPLICATION_STATUSES.REJECTED) {
+      throw new BadRequestException('Only rejected interest forms can be deleted');
+    }
+
+    const linkedUserId = interest.userId?.toString()
+      ?? (await this.usersService.findByEmailOptional(interest.email))?._id?.toString();
+
+    if (linkedUserId) {
+      await this.usersService.delete(linkedUserId);
+    }
+
+    await this.interestModel.findByIdAndDelete(id).exec();
+  }
 }
