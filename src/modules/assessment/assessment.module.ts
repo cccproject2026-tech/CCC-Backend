@@ -12,6 +12,7 @@ import { AssessmentAssigned, AssessmentAssignedSchema } from './schemas/assessme
 import { HomeModule } from '../home/home.module';
 import { MailerService } from 'src/common/utils/mail.util';
 import { ConfigModule } from '@nestjs/config';
+import { RoadMapsModule } from '../roadmaps/roadmaps.module';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { ConfigModule } from '@nestjs/config';
       { name: AssessmentAssigned.name, schema: AssessmentAssignedSchema },
     ]),
     HomeModule,
+    RoadMapsModule,
     S3Module,
     MulterModule.register({
       storage: require('multer').memoryStorage(),

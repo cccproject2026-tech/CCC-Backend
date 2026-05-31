@@ -1,12 +1,15 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { RoadMapsService } from './roadmaps.service';
+import { RoadmapAssessmentCompletionService } from './roadmap-assessment-completion.service';
 import { RoadMapsController } from './roadmaps.controller';
 import { RoadMap, RoadMapSchema } from './schemas/roadmap.schema';
 import { Comments, CommentsSchema } from './schemas/comments.schema';
 import { Queries, QueriesSchema } from './schemas/queries.schema';
 import { Extras, ExtrasSchema } from './schemas/extras.schema';
 import { Progress, ProgressSchema } from '../progress/schemas/progress.schema';
+import { Assessment, AssessmentSchema } from '../assessment/schemas/assessment.schema';
+import { UserAnswer, UserAnswerSchema } from '../assessment/schemas/answer.schema';
 import { S3Module } from '../s3/s3.module';
 import { HomeModule } from '../home/home.module';
 import { User, UserSchema } from '../users/schemas/user.schema';
@@ -25,6 +28,8 @@ import { ConfigModule } from '@nestjs/config';
             { name: Queries.name, schema: QueriesSchema },
             { name: Extras.name, schema: ExtrasSchema },
             { name: Progress.name, schema: ProgressSchema },
+            { name: Assessment.name, schema: AssessmentSchema },
+            { name: UserAnswer.name, schema: UserAnswerSchema },
             { name: User.name, schema: UserSchema },
             { name: Availability.name, schema: AvailabilitySchema },
             { name: Appointment.name, schema: AppointmentSchema },
@@ -34,7 +39,7 @@ import { ConfigModule } from '@nestjs/config';
          AppointmentsModule
     ],
     controllers: [RoadMapsController],
-    providers: [RoadMapsService, MailerService],
-    exports: [RoadMapsService],
+    providers: [RoadMapsService, RoadmapAssessmentCompletionService, MailerService],
+    exports: [RoadMapsService, RoadmapAssessmentCompletionService],
 })
 export class RoadMapsModule { }

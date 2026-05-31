@@ -21,6 +21,7 @@ import { HomeService } from '../home/home.service';
 import { MailerService } from '../../common/utils/mail.util';
 import { ROLES } from '../../common/constants/roles.constants';
 import { assessmentSectionRecommendationNotification } from '../../common/utils/notification-copy.util';
+import { RoadmapAssessmentCompletionService } from '../roadmaps/roadmap-assessment-completion.service';
 
 @Injectable()
 export class AssessmentService {
@@ -40,6 +41,7 @@ export class AssessmentService {
     private assessmentAssignedModel: Model<AssessmentAssignedDocument>,
     private readonly notificationService: HomeService,
     private readonly mailer: MailerService,
+    private readonly roadmapAssessmentCompletionService: RoadmapAssessmentCompletionService,
   ) { }
 
   private isPastoralLearnerRole(role?: string): boolean {
@@ -930,6 +932,18 @@ export class AssessmentService {
       details: rec.details,
       module: 'ASSESSMENT'
     });
+
+    try {
+      await this.roadmapAssessmentCompletionService.tryCompleteRoadmapTasksAfterCdp(
+        userId,
+        assessmentId,
+        updated,
+      );
+    } catch (err) {
+      this.logger.error(
+        `Roadmap assessment completion failed for user ${userId}, assessment ${assessmentId}: ${err instanceof Error ? err.message : err}`,
+      );
+    }
 
     return updated;
   }
