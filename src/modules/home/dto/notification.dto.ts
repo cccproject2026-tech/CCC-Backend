@@ -43,9 +43,12 @@ export class ClearNotificationDto {
 }
 
 export class NotificationItemResponseDto {
+  _id: string;
   name: string;
   details: string;
   module?: string;
+  read?: boolean;
+  createdAt?: Date;
 }
 
 export class NotificationResponseDto {
