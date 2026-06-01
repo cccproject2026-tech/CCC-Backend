@@ -54,6 +54,12 @@ export class AssessmentService {
     return r === ROLES.MENTOR || r === ROLES.FIELD_MENTOR;
   }
   async create(dto: CreateAssessmentDto): Promise<Assessment> {
+    if (dto.type === 'CMA' && (!dto.preSurvey || dto.preSurvey.length === 0)) {
+      throw new BadRequestException(
+        'CMA assessments must include at least one pre-survey question on create.',
+      );
+    }
+
     const newAssessment = await this.assessmentModel.create({
       ...dto,
       roadmapId: dto.roadmapId ? new Types.ObjectId(dto.roadmapId) : undefined,
@@ -102,12 +108,30 @@ export class AssessmentService {
       throw new BadRequestException('Invalid assessment ID format');
     }
 
-    if (!updates || Object.keys(updates).length === 0) {
+    const $set: Record<string, unknown> = {};
+
+    if (updates.name !== undefined) {
+      $set.name = updates.name;
+    }
+    if (updates.description !== undefined) {
+      $set.description = updates.description;
+    }
+    if (updates.instructions !== undefined) {
+      $set.instructions = updates.instructions;
+    }
+    if (updates.type !== undefined) {
+      $set.type = updates.type;
+    }
+    if (updates.preSurvey !== undefined) {
+      $set.preSurvey = updates.preSurvey;
+    }
+
+    if (Object.keys($set).length === 0) {
       throw new BadRequestException('No update data provided');
     }
 
     const assessment = await this.assessmentModel
-      .findByIdAndUpdate(id, updates, {
+      .findByIdAndUpdate(id, { $set }, {
         new: true,
         runValidators: true,
       })
@@ -807,18 +831,21 @@ export class AssessmentService {
       throw new BadRequestException('Invalid assessment ID format');
     }
 
-    if (!dto.preSurvey || dto.preSurvey.length === 0) {
-      throw new BadRequestException('Pre-survey questions cannot be empty');
+    if (dto.preSurvey === undefined) {
+      throw new BadRequestException('preSurvey is required');
     }
 
-    const assessment = await this.assessmentModel.findById(assessmentId);
+    const assessment = await this.assessmentModel
+      .findByIdAndUpdate(
+        assessmentId,
+        { $set: { preSurvey: dto.preSurvey } },
+        { new: true, runValidators: true },
+      )
+      .exec();
+
     if (!assessment) {
       throw new NotFoundException('Assessment not found');
     }
-
-    assessment.preSurvey = dto.preSurvey as any;
-
-    await assessment.save();
 
     return assessment;
   }

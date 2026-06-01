@@ -123,6 +123,18 @@ export class UpdateAssessmentDto {
   @IsOptional()
   @IsArray()
   instructions?: string[];
+
+  @IsOptional()
+  @IsString()
+  @IsIn(VALID_ASSESSMENT_TYPES)
+  type?: string;
+
+  /** Replaces the full pre-survey question list. Send `[]` to clear when pre-survey is disabled. */
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => PreSurveyQuestionDto)
+  preSurvey?: PreSurveyQuestionDto[];
 }
 
 export class SectionRecommendationDto {

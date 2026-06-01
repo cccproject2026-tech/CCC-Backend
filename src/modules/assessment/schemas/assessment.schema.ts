@@ -132,14 +132,13 @@ export class Assessment {
     required: false,
     validate: {
       validator: function (this: Assessment, value: any) {
-        if (this.type === 'CMA')
-          return Array.isArray(value) && value.length > 0;
-        return !value || value.length === 0;
+        const arr = Array.isArray(value) ? value : [];
+        if (this.type === 'CMA') {
+          return value === undefined || value === null || Array.isArray(value);
+        }
+        return arr.length === 0;
       },
-      message: (props) =>
-        props.value && props.value.length > 0
-          ? 'preSurvey is only allowed for CMA assessments.'
-          : 'CMA assessments must include preSurvey questions.',
+      message: () => 'preSurvey is only allowed for CMA assessments.',
     },
   })
   preSurvey?: PreSurveyQuestion[];
