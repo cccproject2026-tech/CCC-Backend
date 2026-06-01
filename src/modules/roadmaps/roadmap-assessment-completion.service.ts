@@ -41,7 +41,7 @@ export class RoadmapAssessmentCompletionService {
 
     /**
      * Called after a section recommendation is saved. Returns the number of roadmap
-     * steps completed (0 when mentor review is not yet fully done).
+     * steps completed (0 until mentor has sent CDP for at least one section).
      */
     async tryCompleteRoadmapTasksAfterCdp(
         userId: string,
@@ -58,36 +58,33 @@ export class RoadmapAssessmentCompletionService {
             userAnswer,
         );
 
-        const reviewComplete = await this.isMentorReviewComplete(
+        const hasMentorCdp = await this.isMentorReviewComplete(
             assessmentId,
             userId,
             userAnswer,
         );
-        if (!reviewComplete) {
-            const missing = await this.getSectionsMissingCdp(
-                assessmentId,
-                userId,
-                userAnswer,
-            );
-            if (missing.length > 0) {
-                this.logger.warn(
-                    `Mentor CDP incomplete for user ${userId}, assessment ${assessmentId}. ` +
-                        `Missing recommendations for section(s): ${missing.join('; ')}`,
-                );
-            }
+        if (!hasMentorCdp) {
             return 0;
         }
 
         return this.completeAssessmentRoadmapTasks(userId, assessmentId);
     }
 
+    /** True when mentor has sent CDP for at least one assessment section. */
     async isMentorReviewComplete(
         assessmentId: string,
         userId: string,
         userAnswer?: UserAnswerSections,
     ): Promise<boolean> {
-        const missing = await this.getSectionsMissingCdp(assessmentId, userId, userAnswer);
-        return missing.length === 0;
+        const answer = await this.loadUserAnswer(assessmentId, userId, userAnswer);
+        if (!answer?.sections?.length) {
+            return false;
+        }
+
+        return answer.sections.some(
+            (s) =>
+                Array.isArray(s.recommendations) && s.recommendations.length > 0,
+        );
     }
 
     private async loadUserAnswer(
@@ -192,7 +189,7 @@ export class RoadmapAssessmentCompletionService {
     /**
      * Assessment-only nested roadmap tasks:
      * - `submitted` when pastor completed all sections (awaiting mentor CDP)
-     * - `completed` when mentor CDP is on every section
+     * - `completed` when mentor has sent CDP for at least one section
      */
     async applyAssessmentRoadmapStatusFromState(
         userId: string,
