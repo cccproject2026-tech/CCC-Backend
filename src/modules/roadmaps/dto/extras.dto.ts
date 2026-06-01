@@ -62,7 +62,24 @@ export class ExtrasResponseDto {
     extras: Record<string, any>[];
     uploadedDocuments?: ExtrasDocumentDto[];
     isResubmitted?: boolean;
+    submittedAt?: Date;
     resubmittedAt?: Date;
+    submissionNumber?: number;
     createdAt: Date;
     updatedAt: Date;
+}
+
+/** Mentor Review Center: roadmap / nested-task submission activity for one pastor. */
+export class RoadmapSubmissionActivityDto {
+    submissionId: string;
+    userId: string;
+    roadMapId: string;
+    nestedRoadMapItemId?: string;
+    parentRoadmapName: string;
+    taskName: string;
+    submittedAt: Date;
+    resubmittedAt?: Date | null;
+    isResubmission: boolean;
+    submissionNumber: number;
+    status: 'submitted' | 'resubmitted';
 }

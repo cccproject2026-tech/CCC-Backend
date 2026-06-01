@@ -23,7 +23,13 @@ import {
     ReplyQueryDto,
     UpdateQueryDto,
 } from './dto/queries.dto';
-import { CreateExtrasDto, UpdateExtrasDto, ExtrasResponseDto, ExtrasDocumentDto } from './dto/extras.dto';
+import {
+    CreateExtrasDto,
+    UpdateExtrasDto,
+    ExtrasResponseDto,
+    ExtrasDocumentDto,
+    RoadmapSubmissionActivityDto,
+} from './dto/extras.dto';
 import { ParseMongoIdPipe } from 'src/common/pipes/parse-mongo-id.pipe';
 // import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 // import { RolesGuard } from '../../common/guards/roles.guard';
@@ -91,6 +97,22 @@ export class RoadMapsController {
                 ? 'Resubmitted extras fetched successfully'
                 : 'No resubmitted extras found',
             data: extras,
+        };
+    }
+
+    @Get('submissions/activity')
+    async getSubmissionActivity(
+        @Query('userId', ParseMongoIdPipe) userId: string,
+        @Query('from') from: string,
+        @Query('to') to: string,
+    ): Promise<BaseResponse<RoadmapSubmissionActivityDto[]>> {
+        const data = await this.roadMapsService.getSubmissionActivity(userId, from, to);
+        return {
+            success: true,
+            message: data.length > 0
+                ? 'Roadmap submission activity fetched successfully'
+                : 'No roadmap submission activity found for this date range',
+            data,
         };
     }
 

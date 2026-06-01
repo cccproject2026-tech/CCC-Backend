@@ -36,6 +36,7 @@ export class PreSurveyQuestionDto {
 }
 
 export class UpdatePreSurveyDto {
+    /** Full replacement list; send `[]` to clear pre-survey questions. */
     @IsArray()
     @ValidateNested({ each: true })
     @Type(() => PreSurveyQuestionDto)

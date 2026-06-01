@@ -44,8 +44,16 @@ export class Extras {
     @Prop({ type: Boolean, default: false })
     isResubmitted: boolean;
 
+    /** First pastor submission timestamp for this roadmap / nested task scope. */
+    @Prop({ type: Date, default: null })
+    submittedAt?: Date;
+
     @Prop({ type: Date, default: null })
     resubmittedAt?: Date;
+
+    /** 1 = first submission; increments on each resubmission after completion. */
+    @Prop({ type: Number, default: 1, min: 1 })
+    submissionNumber: number;
 
     createdAt?: Date;
     updatedAt?: Date;
@@ -60,3 +68,5 @@ export const ExtrasSchema = SchemaFactory.createForClass(Extras);
 ExtrasSchema.index({ userId: 1, roadMapId: 1 });
 ExtrasSchema.index({ userId: 1, roadMapId: 1, nestedRoadMapItemId: 1 }, { unique: true });
 ExtrasSchema.index({ isResubmitted: 1, userId: 1 });
+ExtrasSchema.index({ userId: 1, submittedAt: 1 });
+ExtrasSchema.index({ userId: 1, resubmittedAt: 1 });
