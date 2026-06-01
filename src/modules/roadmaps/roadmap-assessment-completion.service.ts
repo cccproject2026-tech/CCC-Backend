@@ -8,6 +8,15 @@ import { Assessment, AssessmentDocument } from '../assessment/schemas/assessment
 import { UserAnswer } from '../assessment/schemas/answer.schema';
 import { RoadMapsService } from './roadmaps.service';
 import { toObjectId } from 'src/common/pipes/to-object-id.pipe';
+import { PROGRESS_STATUSES } from '../../common/constants/status.constants';
+
+type UserAnswerSections = {
+    sections?: {
+        sectionId?: Types.ObjectId;
+        recommendations?: string[];
+        layers?: unknown[];
+    }[];
+};
 
 const MENTOR_CDP_TRIGGER = 'mentor_cdp_complete';
 
@@ -37,11 +46,17 @@ export class RoadmapAssessmentCompletionService {
     async tryCompleteRoadmapTasksAfterCdp(
         userId: string,
         assessmentId: string,
-        userAnswer?: { sections?: { sectionId?: Types.ObjectId; recommendations?: string[] }[] },
+        userAnswer?: UserAnswerSections,
     ): Promise<number> {
         if (!Types.ObjectId.isValid(userId) || !Types.ObjectId.isValid(assessmentId)) {
             return 0;
         }
+
+        await this.applyAssessmentRoadmapStatusFromState(
+            userId,
+            assessmentId,
+            userAnswer,
+        );
 
         const reviewComplete = await this.isMentorReviewComplete(
             assessmentId,
@@ -49,6 +64,17 @@ export class RoadmapAssessmentCompletionService {
             userAnswer,
         );
         if (!reviewComplete) {
+            const missing = await this.getSectionsMissingCdp(
+                assessmentId,
+                userId,
+                userAnswer,
+            );
+            if (missing.length > 0) {
+                this.logger.warn(
+                    `Mentor CDP incomplete for user ${userId}, assessment ${assessmentId}. ` +
+                        `Missing recommendations for section(s): ${missing.join('; ')}`,
+                );
+            }
             return 0;
         }
 
@@ -58,7 +84,82 @@ export class RoadmapAssessmentCompletionService {
     async isMentorReviewComplete(
         assessmentId: string,
         userId: string,
-        userAnswer?: { sections?: { sectionId?: Types.ObjectId; recommendations?: string[] }[] },
+        userAnswer?: UserAnswerSections,
+    ): Promise<boolean> {
+        const missing = await this.getSectionsMissingCdp(assessmentId, userId, userAnswer);
+        return missing.length === 0;
+    }
+
+    private async loadUserAnswer(
+        assessmentId: string,
+        userId: string,
+        userAnswer?: UserAnswerSections,
+    ): Promise<UserAnswerSections | null> {
+        if (userAnswer?.sections?.length) {
+            return userAnswer;
+        }
+
+        const userObjectId = toObjectId(userId);
+        if (!userObjectId) {
+            return null;
+        }
+
+        return this.userAnswerModel
+            .findOne({
+                assessmentId: new Types.ObjectId(assessmentId),
+                $or: [{ userId: userObjectId }, { userId }],
+            })
+            .lean();
+    }
+
+    private async getSectionsMissingCdp(
+        assessmentId: string,
+        userId: string,
+        userAnswer?: UserAnswerSections,
+    ): Promise<string[]> {
+        const assessment = await this.assessmentModel
+            .findById(assessmentId)
+            .select('sections')
+            .lean();
+
+        const templateSections = assessment?.sections ?? [];
+        if (templateSections.length === 0) {
+            return ['(assessment has no sections)'];
+        }
+
+        const answer = await this.loadUserAnswer(assessmentId, userId, userAnswer);
+        if (!answer?.sections?.length) {
+            return templateSections.map(
+                (s) =>
+                    (s as { title?: string }).title ??
+                    String((s as { _id?: Types.ObjectId })._id),
+            );
+        }
+
+        const missing: string[] = [];
+        for (const templateSection of templateSections) {
+            const sectionId = String((templateSection as { _id?: Types.ObjectId })._id);
+            const sectionAnswer = answer.sections!.find(
+                (s) => String(s.sectionId) === sectionId,
+            );
+            const hasRecs =
+                sectionAnswer &&
+                Array.isArray(sectionAnswer.recommendations) &&
+                sectionAnswer.recommendations.length > 0;
+            if (!hasRecs) {
+                missing.push(
+                    (templateSection as { title?: string }).title ?? sectionId,
+                );
+            }
+        }
+        return missing;
+    }
+
+    /** Pastor finished all assessment sections → nested roadmap task status `submitted`. */
+    async isPastorAssessmentFullySubmitted(
+        assessmentId: string,
+        userId: string,
+        userAnswer?: UserAnswerSections,
     ): Promise<boolean> {
         const assessment = await this.assessmentModel
             .findById(assessmentId)
@@ -70,15 +171,7 @@ export class RoadmapAssessmentCompletionService {
             return false;
         }
 
-        const answer =
-            userAnswer ??
-            (await this.userAnswerModel
-                .findOne({
-                    assessmentId: new Types.ObjectId(assessmentId),
-                    userId: new Types.ObjectId(userId),
-                })
-                .lean());
-
+        const answer = await this.loadUserAnswer(assessmentId, userId, userAnswer);
         if (!answer?.sections?.length) {
             return false;
         }
@@ -90,10 +183,138 @@ export class RoadmapAssessmentCompletionService {
             );
             return (
                 sectionAnswer &&
-                Array.isArray(sectionAnswer.recommendations) &&
-                sectionAnswer.recommendations.length > 0
+                Array.isArray(sectionAnswer.layers) &&
+                sectionAnswer.layers.length > 0
             );
         });
+    }
+
+    /**
+     * Assessment-only nested roadmap tasks:
+     * - `submitted` when pastor completed all sections (awaiting mentor CDP)
+     * - `completed` when mentor CDP is on every section
+     */
+    async applyAssessmentRoadmapStatusFromState(
+        userId: string,
+        assessmentId: string,
+        userAnswer?: UserAnswerSections,
+    ): Promise<void> {
+        const userObjectId = toObjectId(userId);
+        if (!userObjectId) {
+            return;
+        }
+
+        const fullySubmitted = await this.isPastorAssessmentFullySubmitted(
+            assessmentId,
+            userId,
+            userAnswer,
+        );
+        const reviewComplete = await this.isMentorReviewComplete(
+            assessmentId,
+            userId,
+            userAnswer,
+        );
+
+        if (!fullySubmitted && !reviewComplete) {
+            return;
+        }
+
+        const scopes = await this.findAssessmentRoadmapScopes(
+            userObjectId,
+            assessmentId,
+        );
+        if (scopes.length === 0) {
+            return;
+        }
+
+        const progressDoc = await this.progressModel.findOne({
+            $or: [{ userId: userObjectId }, { userId: userId }],
+        });
+        if (!progressDoc) {
+            return;
+        }
+
+        const assessmentTaskSteps = 1;
+        let modified = false;
+
+        for (const scope of scopes) {
+            if (!scope.nestedRoadMapItemId) {
+                continue;
+            }
+
+            const roadmapEntry = progressDoc.roadmaps.find(
+                (r) => r.roadMapId?.toString() === scope.roadMapId,
+            );
+            if (!roadmapEntry) {
+                continue;
+            }
+
+            const nestedId = scope.nestedRoadMapItemId;
+            let nestedEntry = roadmapEntry.nestedRoadmaps?.find(
+                (n) => n.nestedRoadmapId?.toString() === nestedId,
+            );
+
+            if (!nestedEntry) {
+                if (!roadmapEntry.nestedRoadmaps) {
+                    roadmapEntry.nestedRoadmaps = [];
+                }
+                nestedEntry = {
+                    nestedRoadmapId: new Types.ObjectId(nestedId),
+                    completedSteps: 0,
+                    totalSteps: assessmentTaskSteps,
+                    progressPercentage: 0,
+                    status: PROGRESS_STATUSES.NOT_STARTED,
+                };
+                roadmapEntry.nestedRoadmaps.push(nestedEntry);
+                modified = true;
+            }
+
+            if (reviewComplete) {
+                if (
+                    nestedEntry.status !== PROGRESS_STATUSES.COMPLETED ||
+                    nestedEntry.completedSteps !== assessmentTaskSteps ||
+                    nestedEntry.totalSteps !== assessmentTaskSteps
+                ) {
+                    nestedEntry.totalSteps = assessmentTaskSteps;
+                    nestedEntry.completedSteps = assessmentTaskSteps;
+                    nestedEntry.status = PROGRESS_STATUSES.COMPLETED;
+                    modified = true;
+                }
+            } else if (fullySubmitted) {
+                if (
+                    nestedEntry.status !== PROGRESS_STATUSES.SUBMITTED ||
+                    nestedEntry.completedSteps !== 0 ||
+                    nestedEntry.totalSteps !== assessmentTaskSteps
+                ) {
+                    nestedEntry.totalSteps = assessmentTaskSteps;
+                    nestedEntry.completedSteps = 0;
+                    nestedEntry.status = PROGRESS_STATUSES.SUBMITTED;
+                    modified = true;
+                }
+            }
+        }
+
+        if (modified) {
+            progressDoc.markModified('roadmaps');
+            await progressDoc.save();
+            this.logger.log(
+                `Assessment roadmap status for user ${userId}, assessment ${assessmentId}: ` +
+                    (reviewComplete ? 'completed' : 'submitted'),
+            );
+        }
+    }
+
+    /** @deprecated Use applyAssessmentRoadmapStatusFromState */
+    async syncAssessmentCdpProgressToRoadmaps(
+        userId: string,
+        assessmentId: string,
+        userAnswer?: UserAnswerSections,
+    ): Promise<void> {
+        return this.applyAssessmentRoadmapStatusFromState(
+            userId,
+            assessmentId,
+            userAnswer,
+        );
     }
 
     private async completeAssessmentRoadmapTasks(
@@ -209,13 +430,16 @@ export class RoadmapAssessmentCompletionService {
         }
     }
 
-    private countMatchingAssessmentExtras(
+    /** Only system-written completion rows count — template ASSESSMENT links must not block CDP completion. */
+    private countSystemAssessmentCompletionExtras(
         extras: any[] | undefined,
         assessmentId: string,
     ): number {
         return (extras ?? []).filter(
             (e) =>
-                e?.type === 'ASSESSMENT' && String(e.assessmentId) === assessmentId,
+                e?.type === 'ASSESSMENT' &&
+                String(e.assessmentId) === assessmentId &&
+                (e.trigger === MENTOR_CDP_TRIGGER || e.completedBy === 'system'),
         ).length;
     }
 
@@ -273,7 +497,7 @@ export class RoadmapAssessmentCompletionService {
             scope.nestedRoadMapItemId,
         );
         const extrasDoc = await this.extrasModel.findOne(existsQuery).lean();
-        const existingCount = this.countMatchingAssessmentExtras(
+        const existingCount = this.countSystemAssessmentCompletionExtras(
             extrasDoc?.extras,
             assessmentId,
         );

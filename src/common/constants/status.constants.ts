@@ -195,6 +195,7 @@ export const PROGRESS_STATUSES = {
   NOT_STARTED: 'not_started',
   DUE: 'due',
   IN_PROGRESS: 'in_progress',
+  SUBMITTED: 'submitted',
   COMPLETED: 'completed',
 } as const;
 
@@ -202,6 +203,7 @@ export const VALID_PROGRESS_STATUSES = [
   PROGRESS_STATUSES.NOT_STARTED,
   PROGRESS_STATUSES.DUE,
   PROGRESS_STATUSES.IN_PROGRESS,
+  PROGRESS_STATUSES.SUBMITTED,
   PROGRESS_STATUSES.COMPLETED,
 ] as const;
 

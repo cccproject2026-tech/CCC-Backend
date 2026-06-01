@@ -144,6 +144,8 @@ function calculateProgress(doc: any) {
         let hasNestedCompleted = false;
         let allNestedCompleted = true;
 
+        let hasNestedSubmitted = false;
+
         if (r.nestedRoadmaps && r.nestedRoadmaps.length > 0) {
             r.nestedRoadmaps.forEach((nested: any) => {
                 // Calculate nested progress percentage
@@ -151,10 +153,16 @@ function calculateProgress(doc: any) {
                     nested.progressPercentage = Math.min((nested.completedSteps / nested.totalSteps) * 100, 100);
                 else nested.progressPercentage = 0;
 
+                const wasSubmitted = nested.status === PROGRESS_STATUSES.SUBMITTED;
+
                 // Automatically update nested status based on progress
                 if (nested.progressPercentage >= 100) {
                     nested.status = PROGRESS_STATUSES.COMPLETED;
                     hasNestedCompleted = true;
+                } else if (wasSubmitted) {
+                    nested.status = PROGRESS_STATUSES.SUBMITTED;
+                    hasNestedSubmitted = true;
+                    allNestedCompleted = false;
                 } else if (nested.progressPercentage > 0) {
                     nested.status = PROGRESS_STATUSES.IN_PROGRESS;
                     hasNestedInProgress = true;
@@ -174,11 +182,15 @@ function calculateProgress(doc: any) {
         // Automatically update main roadmap status based on progress and nested roadmaps
         if (r.progressPercentage >= 100) {
             r.status = PROGRESS_STATUSES.COMPLETED;
-        } else if (r.progressPercentage > 0 || hasNestedInProgress || hasNestedCompleted) {
+        } else if (
+            r.progressPercentage > 0 ||
+            hasNestedInProgress ||
+            hasNestedCompleted ||
+            hasNestedSubmitted
+        ) {
             // Main roadmap is IN_PROGRESS if:
             // - Its own completedSteps > 0, OR
-            // - Any nested roadmap is IN_PROGRESS, OR
-            // - Any nested roadmap is COMPLETED (but not all)
+            // - Any nested roadmap is IN_PROGRESS, SUBMITTED, or COMPLETED (but not all)
             r.status = PROGRESS_STATUSES.IN_PROGRESS;
         } else {
             r.status = PROGRESS_STATUSES.NOT_STARTED;

@@ -558,6 +558,14 @@ export class AssessmentService {
         'No answers found for this user and assessment',
       );
 
+    void this.roadmapAssessmentCompletionService
+      .applyAssessmentRoadmapStatusFromState(userId, assessmentId, result)
+      .catch((err) => {
+        this.logger.warn(
+          `Assessment roadmap status sync on fetch failed for user ${userId}, assessment ${assessmentId}: ${err instanceof Error ? err.message : err}`,
+        );
+      });
+
     return result;
   }
 
@@ -746,6 +754,18 @@ export class AssessmentService {
       },
       { new: true },
     );
+
+    try {
+      await this.roadmapAssessmentCompletionService.applyAssessmentRoadmapStatusFromState(
+        userId,
+        assessmentId,
+        updated ?? undefined,
+      );
+    } catch (err) {
+      this.logger.error(
+        `Assessment roadmap status sync failed for user ${userId}, assessment ${assessmentId}: ${err instanceof Error ? err.message : err}`,
+      );
+    }
 
     return updated;
   }

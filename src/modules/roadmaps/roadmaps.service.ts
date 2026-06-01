@@ -24,7 +24,7 @@ import { AppointmentsService } from '../appointments/appointments.service';
 import { S3Service } from '../s3/s3.service';
 import { MailerService } from '../../common/utils/mail.util';
 import { ROLES } from '../../common/constants/roles.constants';
-import { APPOINTMENT_PLATFORMS, APPOINTMENT_STATUSES } from '../../common/constants/status.constants';
+import { APPOINTMENT_PLATFORMS, APPOINTMENT_STATUSES, PROGRESS_STATUSES } from '../../common/constants/status.constants';
 
 function resolveDefaultSteps(totalSteps?: number, extras?: any[]): number {
     if (typeof totalSteps === 'number' && totalSteps > 0) {
@@ -855,6 +855,69 @@ export class RoadMapsService {
         return extras ? toExtrasResponseDto(extras as any) : null;
     }
 
+    /**
+     * Ensures a nested progress row exists before $inc; otherwise arrayFilters match nothing.
+     */
+    private async ensureNestedRoadmapProgressEntry(
+        userObjectId: Types.ObjectId,
+        userIdString: string | undefined,
+        roadMapObjectId: Types.ObjectId,
+        nestedRoadMapItemObjectId: Types.ObjectId,
+        defaultTotalSteps = 1,
+    ): Promise<void> {
+        const userIdFlexibleQuery = {
+            $or: [
+                { userId: userObjectId },
+                ...(userIdString ? [{ userId: userIdString }] : []),
+            ],
+        };
+
+        const progress = await this.progressModel
+            .findOne({
+                ...userIdFlexibleQuery,
+                'roadmaps.roadMapId': roadMapObjectId,
+            })
+            .exec();
+
+        if (!progress) {
+            return;
+        }
+
+        const roadmapEntry = progress.roadmaps.find(
+            (r) => r.roadMapId?.toString() === roadMapObjectId.toString(),
+        );
+        if (!roadmapEntry) {
+            return;
+        }
+
+        const nestedExists = roadmapEntry.nestedRoadmaps?.some(
+            (n) =>
+                n.nestedRoadmapId?.toString() ===
+                nestedRoadMapItemObjectId.toString(),
+        );
+        if (nestedExists) {
+            return;
+        }
+
+        await this.progressModel.updateOne(
+            {
+                ...userIdFlexibleQuery,
+                'roadmaps.roadMapId': roadMapObjectId,
+            },
+            {
+                $push: {
+                    'roadmaps.$.nestedRoadmaps': {
+                        nestedRoadmapId: nestedRoadMapItemObjectId,
+                        completedSteps: 0,
+                        totalSteps: defaultTotalSteps,
+                        progressPercentage: 0,
+                        status: PROGRESS_STATUSES.NOT_STARTED,
+                    },
+                },
+            },
+        );
+    }
+
     async saveExtras(roadMapId: string, dto: CreateExtrasDto): Promise<ExtrasResponseDto> {
         const roadMapObjectId = toObjectId(roadMapId);
         const userObjectId = toObjectId(dto.userId);
@@ -913,6 +976,13 @@ export class RoadMapsService {
             };
 
             if (nestedRoadMapItemObjectId) {
+                await this.ensureNestedRoadmapProgressEntry(
+                    userObjectId,
+                    userIdString,
+                    roadMapObjectId,
+                    nestedRoadMapItemObjectId,
+                    newExtras.length,
+                );
                 await this.progressModel.findOneAndUpdate(
                     {
                         ...userIdFlexibleQuery,
@@ -1014,6 +1084,13 @@ export class RoadMapsService {
             };
 
             if (nestedRoadMapItemObjectId) {
+                await this.ensureNestedRoadmapProgressEntry(
+                    userObjectId,
+                    userIdString,
+                    roadMapObjectId,
+                    nestedRoadMapItemObjectId,
+                    newItemsCount,
+                );
                 await this.progressModel.findOneAndUpdate(
                     {
                         ...userIdFlexibleQuery,
