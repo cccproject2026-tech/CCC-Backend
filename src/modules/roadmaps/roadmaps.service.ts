@@ -12,7 +12,13 @@ import { toCommentsThreadResponseDto } from './utils/comments.mapper';
 import { toQueriesThreadResponseDto } from './utils/queries.mapper';
 import { VALID_ROADMAP_STATUSES, ROADMAP_STATUSES, QUERY_STATUSES } from '../../common/constants/status.constants';
 import { Extras, ExtrasDocument } from './schemas/extras.schema';
-import { CreateExtrasDto, UpdateExtrasDto, ExtrasResponseDto, ExtrasDocumentDto } from './dto/extras.dto';
+import {
+    CreateExtrasDto,
+    UpdateExtrasDto,
+    ExtrasResponseDto,
+    ExtrasDocumentDto,
+    RoadmapSubmissionActivityDto,
+} from './dto/extras.dto';
 import { toExtrasResponseDto } from './utils/extras.mapper';
 import { Progress, ProgressDocument } from '../progress/schemas/progress.schema';
 import { toObjectId } from 'src/common/pipes/to-object-id.pipe';
@@ -895,6 +901,8 @@ export class RoadMapsService {
                 userId: userObjectId,
                 nestedRoadMapItemId: nestedRoadMapItemObjectId ?? null,
                 extras: newExtras,
+                submittedAt: now,
+                submissionNumber: 1,
             });
         } catch (err) {
             if (err?.code === 11000) {
@@ -1091,8 +1099,17 @@ export class RoadMapsService {
                         isResubmitted: true,
                         resubmittedAt: new Date(),
                     },
+                    $inc: { submissionNumber: 1 },
                 },
             );
+            const refreshed = await this.extrasModel.findById(updatedExtras._id).lean().exec();
+            if (refreshed) {
+                await this.maybeSyncJumpstartSessionOneAfterRoadmapCompletion(
+                    userObjectId,
+                    roadMapObjectId as Types.ObjectId,
+                );
+                return toExtrasResponseDto(refreshed as any);
+            }
         }
 
         await this.maybeSyncJumpstartSessionOneAfterRoadmapCompletion(
@@ -2228,6 +2245,97 @@ export class RoadMapsService {
                 };
             })
             .sort((a, b) => a.sessionNumber - b.sessionNumber);
+    }
+
+    async getSubmissionActivity(
+        userId: string,
+        from: string,
+        to: string,
+    ): Promise<RoadmapSubmissionActivityDto[]> {
+        const userObjectId = toObjectId(userId);
+        if (!userObjectId) {
+            throw new BadRequestException('Invalid userId provided.');
+        }
+
+        const fromDate = new Date(from);
+        const toDate = new Date(to);
+        if (Number.isNaN(fromDate.getTime()) || Number.isNaN(toDate.getTime())) {
+            throw new BadRequestException('Invalid from or to date. Use ISO date strings.');
+        }
+
+        fromDate.setUTCHours(0, 0, 0, 0);
+        toDate.setUTCHours(23, 59, 59, 999);
+
+        if (fromDate > toDate) {
+            throw new BadRequestException('from must be on or before to.');
+        }
+
+        const extrasDocs = await this.extrasModel
+            .find({
+                userId: userObjectId,
+                'extras.0': { $exists: true },
+                $or: [
+                    { submittedAt: { $gte: fromDate, $lte: toDate } },
+                    { resubmittedAt: { $gte: fromDate, $lte: toDate } },
+                    {
+                        submittedAt: { $exists: false },
+                        createdAt: { $gte: fromDate, $lte: toDate },
+                    },
+                ],
+            })
+            .sort({ submittedAt: -1, createdAt: -1 })
+            .lean()
+            .exec();
+
+        if (extrasDocs.length === 0) {
+            return [];
+        }
+
+        const roadMapIds = [...new Set(extrasDocs.map((d) => d.roadMapId.toString()))];
+        const roadmaps = await this.roadMapModel
+            .find({ _id: { $in: roadMapIds.map((id) => new Types.ObjectId(id)) } })
+            .select('name roadmaps')
+            .lean()
+            .exec();
+
+        const roadmapById = new Map(
+            roadmaps.map((r) => [r._id.toString(), r]),
+        );
+
+        return extrasDocs.map((doc) => {
+            const roadMapIdStr = doc.roadMapId.toString();
+            const roadmap = roadmapById.get(roadMapIdStr);
+            const parentRoadmapName = roadmap?.name ?? 'Roadmap';
+            const nestedIdStr = doc.nestedRoadMapItemId?.toString();
+
+            let taskName = parentRoadmapName;
+            if (nestedIdStr && Array.isArray(roadmap?.roadmaps)) {
+                const nested = (roadmap.roadmaps as { _id?: Types.ObjectId; name?: string }[]).find(
+                    (item) => item._id?.toString() === nestedIdStr,
+                );
+                if (nested?.name) {
+                    taskName = nested.name;
+                }
+            }
+
+            const submittedAt = doc.submittedAt ?? doc.createdAt ?? new Date();
+            const submissionNumber = doc.submissionNumber ?? (doc.isResubmitted ? 2 : 1);
+            const isResubmission = Boolean(doc.isResubmitted && doc.resubmittedAt);
+
+            return {
+                submissionId: doc._id.toString(),
+                userId: doc.userId.toString(),
+                roadMapId: roadMapIdStr,
+                nestedRoadMapItemId: nestedIdStr,
+                parentRoadmapName,
+                taskName,
+                submittedAt,
+                resubmittedAt: doc.resubmittedAt ?? null,
+                isResubmission,
+                submissionNumber,
+                status: isResubmission ? 'resubmitted' as const : 'submitted' as const,
+            };
+        });
     }
 
     async getResubmittedExtrasForMentor(mentorId: string): Promise<ExtrasResponseDto[]> {

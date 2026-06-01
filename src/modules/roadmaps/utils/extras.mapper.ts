@@ -10,7 +10,9 @@ export const toExtrasResponseDto = (doc: ExtrasDocument | any): ExtrasResponseDt
         extras: doc.extras || [],
         uploadedDocuments: doc.uploadedDocuments || [],
         isResubmitted: doc.isResubmitted ?? false,
+        submittedAt: doc.submittedAt ?? doc.createdAt ?? undefined,
         resubmittedAt: doc.resubmittedAt ?? undefined,
+        submissionNumber: doc.submissionNumber ?? (doc.isResubmitted ? 2 : 1),
         createdAt: doc.createdAt,
         updatedAt: doc.updatedAt,
     };
