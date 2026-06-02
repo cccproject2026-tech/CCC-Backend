@@ -27,12 +27,13 @@ export class CertificatesService {
             certificateId: row.certificateId,
             certificateUrl: row.certificateUrl ?? null,
             pdfUrl: row.pdfUrl,
-            issuedAt: row.issuedAt,
-            issuedByName: row.issuedByName,
             pastorName: row.pastorName,
             mentorName: row.mentorName ?? null,
+            directorName: row.issuedByName,
             programName: row.programName,
             completionDate: row.completionDate,
+            issuedAt: row.issuedAt,
+            personalMessage: row.personalMessage ?? null,
         };
     }
 

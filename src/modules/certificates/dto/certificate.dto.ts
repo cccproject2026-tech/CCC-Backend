@@ -26,10 +26,11 @@ export class CertificateResponseDto {
     certificateId: string;
     certificateUrl?: string | null;
     pdfUrl: string;
-    issuedAt: Date;
-    issuedByName: string;
     pastorName: string;
     mentorName?: string | null;
+    directorName: string;
     programName: string;
     completionDate: Date;
+    issuedAt: Date;
+    personalMessage?: string | null;
 }
