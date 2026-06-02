@@ -24,6 +24,7 @@ import { ZoomModule } from './modules/zoom/zoom.module';
 import { FirebaseModule } from './modules/firebase/firebase.module';
 import { MentoringSessionsModule } from './modules/mentoring-sessions/mentoring-sessions.module';
 import { VoiceNotesModule } from './modules/voice-notes/voice-notes.module';
+import { CertificatesModule } from './modules/certificates/certificates.module';
 
 @Module({
   imports: [
@@ -73,6 +74,7 @@ import { VoiceNotesModule } from './modules/voice-notes/voice-notes.module';
     FirebaseModule,
     MentoringSessionsModule,
     VoiceNotesModule,
+    CertificatesModule,
   ],
 
   controllers: [],

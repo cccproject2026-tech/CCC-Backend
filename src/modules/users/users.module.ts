@@ -11,11 +11,14 @@ import { Interest, InterestSchema } from '../interests/schemas/interest.schema';
 import { HomeModule } from '../home/home.module';
 import { MailerService } from 'src/common/utils/mail.util';
 import { ConfigModule } from '@nestjs/config';
+import { Certificate, CertificateSchema } from '../certificates/schemas/certificate.schema';
+import { CertificatesModule } from '../certificates/certificates.module';
 
 @Module({
     imports: [
         MongooseModule.forFeature([{ name: User.name, schema: UserSchema },
-        { name: Interest.name, schema: InterestSchema }
+        { name: Interest.name, schema: InterestSchema },
+        { name: Certificate.name, schema: CertificateSchema },
         ]),
         ConfigModule,
         S3Module,
@@ -24,6 +27,7 @@ import { ConfigModule } from '@nestjs/config';
         }),
         forwardRef(() => HomeModule),
         forwardRef(() => require('../interests/interests.module').InterestModule),
+        CertificatesModule,
     ],
     controllers: [UsersController, SuperAdminController],
     providers: [UsersService, SuperAdminInitService, MailerService],

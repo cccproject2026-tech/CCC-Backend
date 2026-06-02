@@ -146,6 +146,9 @@ export class User {
   @Prop({ type: Boolean, default: false })
   hasCompleted: boolean;
 
+  @Prop({ type: Date, default: null })
+  completedAt?: Date | null;
+
   @Prop({ type: Boolean, default: false })
   hasIssuedCertificate: boolean;
 

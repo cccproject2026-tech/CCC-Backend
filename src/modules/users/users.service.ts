@@ -33,6 +33,8 @@ import {
 } from '../../common/utils/notification-copy.util';
 import { ConfigService } from '@nestjs/config';
 import { GOOGLE_CALENDAR_STATUSES, GoogleCalendarStatus } from '../../common/constants/google-calendar.constants';
+import { Certificate, CertificateDocument } from '../certificates/schemas/certificate.schema';
+import { CertificatesService } from '../certificates/certificates.service';
 
 /** Mongoose assigns `_id` on each `uploadedDocuments` subdocument; it is not on the User class fields type. */
 type UploadedDocumentSubdoc = User['uploadedDocuments'][number] & {
@@ -44,10 +46,12 @@ export class UsersService {
     constructor(
         @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
         @InjectModel(Interest.name) private interestModel: Model<InterestDocument>,
+        @InjectModel(Certificate.name) private certificateModel: Model<CertificateDocument>,
         private readonly s3Service: S3Service,
         private readonly notificationService: HomeService,
         private readonly mailer: MailerService,
         private readonly config: ConfigService,
+        private readonly certificatesService: CertificatesService,
     ) { }
 
     /** Director users for operational email alerts. */
@@ -178,10 +182,19 @@ export class UsersService {
             this.userModel.countDocuments(query).exec(),
         ]);
 
+        const userIds = usersRaw.map((u: any) => u._id).filter(Boolean);
+        const certRows = await this.certificateModel
+            .find({ userId: { $in: userIds } })
+            .select('userId')
+            .lean()
+            .exec();
+        const usersWithCertificates = new Set(certRows.map((r) => r.userId.toString()));
+
         const users = usersRaw.map((user: any) => {
             const dto = toUserResponseDto(user);
             return {
                 ...dto,
+                hasIssuedCertificate: usersWithCertificates.has(user._id.toString()),
                 profileInfo: user.interestId?.profileInfo ?? null,
                 phoneNumber: user.interestId?.phoneNumber ?? null,
             };
@@ -284,12 +297,26 @@ export class UsersService {
 
         if (!user) throw new NotFoundException('User not found');
 
-        const interest = await this.interestModel
-            .findOne({ userId: id })
-            .lean();
+        const [interest, certificate] = await Promise.all([
+            this.interestModel.findOne({ userId: id }).lean(),
+            this.certificateModel
+                .findOne({ userId: new Types.ObjectId(id) })
+                .select('certificateId certificateUrl pdfUrl issuedAt mentorName')
+                .lean(),
+        ]);
 
         return {
             ...toUserResponseDto(user),
+            hasIssuedCertificate: Boolean(certificate),
+            certificate: certificate
+                ? {
+                      certificateId: certificate.certificateId,
+                      certificateUrl: certificate.certificateUrl ?? null,
+                      pdfUrl: certificate.pdfUrl,
+                      issuedAt: certificate.issuedAt,
+                      mentorName: certificate.mentorName ?? null,
+                  }
+                : null,
             interest: interest || null,
         };
     }
@@ -972,9 +999,10 @@ export class UsersService {
     }
 
     async markCompleted(dto: MarkCompletedDto): Promise<UserResponseDto> {
+        const completedAt = new Date();
         const user = await this.userModel.findByIdAndUpdate(
             dto.userId,
-            { hasCompleted: true },
+            { hasCompleted: true, completedAt },
             { new: true }
         ).exec();
 
@@ -1009,49 +1037,36 @@ export class UsersService {
     }
 
     async issueCertificate(dto: IssueCertificateDto): Promise<UserResponseDto> {
-        const updatedUser = await this.userModel.findOneAndUpdate(
-            {
-                _id: dto.userId,
-                hasCompleted: true,
-                hasIssuedCertificate: { $ne: true },
-            },
-            { hasIssuedCertificate: true },
-            { new: true }
-        ).exec();
+        const cert = await this.certificatesService.issue({
+            userId: dto.userId.toString(),
+            issuedBy: dto.issuedBy.toString(),
+            programName: 'CCC Program',
+        });
 
-        if (updatedUser) {
-            void this.mailer.sendCertificateIssued({
-                to: updatedUser.email,
-                firstName: updatedUser.firstName,
-            });
-
-            const recipName = `${updatedUser.firstName} ${updatedUser.lastName}`;
-            const prof = this.mailer.profileUrl(updatedUser._id.toString()) || undefined;
-            for (const d of await this.listDirectorRecipients()) {
-                void this.mailer.sendDirectorCertificateIssued({
-                    to: d.email,
-                    directorFirstName: d.firstName,
-                    recipientName: recipName,
-                    profileUrl: prof,
-                });
-            }
-
-            return toUserResponseDto(updatedUser);
-        }
-
-        const user = await this.userModel.findById(dto.userId).select('hasCompleted hasIssuedCertificate').lean();
-
-        if (!user) {
+        const updatedUser = await this.userModel.findById(dto.userId).exec();
+        if (!updatedUser) {
             throw new NotFoundException('User not found');
         }
-        if (!user.hasCompleted) {
-            throw new BadRequestException('User has not completed their progress');
-        }
-        if (user.hasIssuedCertificate) {
-            throw new ConflictException('Certificate already issued to this user');
+
+        void this.mailer.sendCertificateIssued({
+            to: updatedUser.email,
+            firstName: updatedUser.firstName,
+        });
+
+        const recipName = `${updatedUser.firstName} ${updatedUser.lastName}`;
+        const prof = this.mailer.profileUrl(updatedUser._id.toString()) || undefined;
+        for (const d of await this.listDirectorRecipients()) {
+            void this.mailer.sendDirectorCertificateIssued({
+                to: d.email,
+                directorFirstName: d.firstName,
+                recipientName: recipName,
+                profileUrl: prof,
+            });
         }
 
-        throw new BadRequestException('Certificate could not be issued at this time');
+        const result = toUserResponseDto(updatedUser);
+        result.hasIssuedCertificate = !!cert;
+        return result;
     }
 
     async getNotes(userId: string): Promise<NoteResponseDto[]> {

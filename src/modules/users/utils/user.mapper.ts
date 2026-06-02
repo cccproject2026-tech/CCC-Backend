@@ -16,6 +16,7 @@ export function toUserResponseDto(user: UserDocument | any): UserResponseDto {
         status: user.status,
         isEmailVerified: user.isEmailVerified,
         hasCompleted: user.hasCompleted || false,
+        completedAt: user.completedAt ?? null,
         hasIssuedCertificate: user.hasIssuedCertificate || false,
         zoomUserId: user.zoomUserId || undefined,
         googleCalendarStatus: user.googleCalendarStatus || undefined,

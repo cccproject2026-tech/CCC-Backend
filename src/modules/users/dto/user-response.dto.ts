@@ -55,8 +55,21 @@ export class UserResponseDto {
     @IsBoolean()
     hasCompleted: boolean;
 
+    @IsOptional()
+    @IsDate()
+    completedAt?: Date | null;
+
     @IsBoolean()
     hasIssuedCertificate: boolean;
+
+    @IsOptional()
+    certificate?: {
+        certificateId: string;
+        certificateUrl?: string | null;
+        pdfUrl: string;
+        issuedAt: Date;
+        mentorName?: string | null;
+    } | null;
 
     @IsString()
     @IsOptional()
