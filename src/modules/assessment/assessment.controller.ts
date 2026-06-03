@@ -69,7 +69,7 @@ export class AssessmentController {
 
   @Patch(':id/instructions')
   // @Roles(ROLES.DIRECTOR, ROLES.MENTOR)
-  async updateAssessment(
+  async updateAssessmentInstructions(
     @Param('id', ParseMongoIdPipe) id: string,
     @Body() dto: UpdateAssessmentDto,
   ): Promise<Assessment> {
@@ -232,6 +232,15 @@ export class AssessmentController {
     @Body() dto: UpdatePreSurveyDto,
   ): Promise<Assessment> {
     return this.assessmentService.updatePreSurvey(id, dto);
+  }
+
+  @Patch(':id')
+  // @Roles(ROLES.DIRECTOR, ROLES.MENTOR)
+  async updateAssessment(
+    @Param('id', ParseMongoIdPipe) id: string,
+    @Body() dto: UpdateAssessmentDto,
+  ): Promise<Assessment> {
+    return this.assessmentService.updateAssessment(id, dto);
   }
 
   @Get(':assessmentId/recommendation-rules')
