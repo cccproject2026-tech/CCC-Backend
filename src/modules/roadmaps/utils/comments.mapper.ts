@@ -25,12 +25,19 @@ export const mapUserToDto = (userDoc: Types.ObjectId | any): PopulatedUserRespon
 
 const toCommentItemResponseDto = (item: CommentItemDocument | any): CommentItemResponseDto => {
     const mentorDetails = mapUserToDto(item.mentorId);
+    const nestedId =
+        item.nestedRoadMapItemId != null
+            ? (item.nestedRoadMapItemId as Types.ObjectId).toString?.() ??
+              String(item.nestedRoadMapItemId)
+            : null;
 
     return {
         _id: item._id?.toString() || String(item._id),
         text: item.text,
         addedDate: item.addedDate,
         mentorId: mentorDetails as PopulatedUserResponseDto,
+        nestedRoadMapItemId: nestedId,
+        taskId: nestedId,
     };
 };
 

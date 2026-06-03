@@ -14,6 +14,10 @@ export class CommentItem {
     @Prop({ required: true })
     text: string;
 
+    /** When set, comment is scoped to a nested roadmap task; omit for roadmap-level comments. */
+    @Prop({ type: Types.ObjectId, default: null })
+    nestedRoadMapItemId?: Types.ObjectId | null;
+
     @Prop({ type: Date, default: Date.now })
     addedDate: Date;
 }

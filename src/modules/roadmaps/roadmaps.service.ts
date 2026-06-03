@@ -331,7 +331,46 @@ export class RoadMapsService {
     //     return { roadmap: roadmapDto, comments };
     // }
 
-    async getCommentThread(roadMapId: string, userId: string): Promise<CommentsThreadResponseDto> {
+    private resolveCommentNestedTaskId(dto: AddCommentDto): Types.ObjectId | null {
+        const raw = dto.nestedRoadMapItemId ?? dto.taskId;
+        if (!raw) {
+            return null;
+        }
+        if (!Types.ObjectId.isValid(raw)) {
+            throw new BadRequestException('Invalid nested task id');
+        }
+        return new Types.ObjectId(raw);
+    }
+
+    private async assertNestedTaskBelongsToRoadmap(
+        roadMapId: string,
+        nestedRoadMapItemId: Types.ObjectId,
+    ): Promise<void> {
+        const roadmap = await this.roadMapModel
+            .findById(roadMapId)
+            .select('roadmaps._id')
+            .lean()
+            .exec();
+        if (!roadmap) {
+            throw new NotFoundException(`RoadMap with ID "${roadMapId}" not found`);
+        }
+        const nestedIds = new Set(
+            (roadmap.roadmaps ?? []).map((item: { _id?: Types.ObjectId }) =>
+                item._id?.toString(),
+            ),
+        );
+        if (!nestedIds.has(nestedRoadMapItemId.toString())) {
+            throw new BadRequestException(
+                'nestedRoadMapItemId does not belong to this roadmap',
+            );
+        }
+    }
+
+    async getCommentThread(
+        roadMapId: string,
+        userId: string,
+        nestedRoadMapItemId?: string,
+    ): Promise<CommentsThreadResponseDto> {
         const thread = await this.commentsModel.findOne({
             roadMapId: new Types.ObjectId(roadMapId),
             userId: new Types.ObjectId(userId)
@@ -344,17 +383,35 @@ export class RoadMapsService {
             return { _id: '', userId, roadMapId, comments: [] };
         }
 
-        return toCommentsThreadResponseDto(thread as any);
+        const response = toCommentsThreadResponseDto(thread as any);
+
+        if (nestedRoadMapItemId) {
+            if (!Types.ObjectId.isValid(nestedRoadMapItemId)) {
+                throw new BadRequestException('Invalid nested task id');
+            }
+            const taskIdStr = new Types.ObjectId(nestedRoadMapItemId).toString();
+            response.comments = response.comments.filter(
+                (c) => c.nestedRoadMapItemId === taskIdStr,
+            );
+        }
+
+        return response;
     }
 
     async addComment(roadMapId: string, dto: AddCommentDto): Promise<CommentsThreadResponseDto> {
         const roadMapObjectId = new Types.ObjectId(roadMapId);
         const userObjectId = new Types.ObjectId(dto.userId);
 
+        const nestedTaskId = this.resolveCommentNestedTaskId(dto);
+        if (nestedTaskId) {
+            await this.assertNestedTaskBelongsToRoadmap(roadMapId, nestedTaskId);
+        }
+
         const newComment: CommentItem = {
             mentorId: new Types.ObjectId(dto.mentorId),
             text: dto.text,
             addedDate: new Date(),
+            nestedRoadMapItemId: nestedTaskId,
         } as CommentItem;
 
         const updatedThread = await this.commentsModel.findOneAndUpdate(
