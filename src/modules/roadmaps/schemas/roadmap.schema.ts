@@ -49,8 +49,12 @@ export class CheckboxExtra {
     @Prop({ required: true })
     name: string;
 
-    @Prop({ required: true })
-    haveButton: boolean;
+    /** Visible label shown next to the checkbox (Director template + Pastor view). */
+    @Prop()
+    checkboxLabel?: string;
+
+    @Prop({ default: false })
+    haveButton?: boolean;
 
     @Prop()
     buttonName?: string;
