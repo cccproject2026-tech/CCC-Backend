@@ -113,52 +113,41 @@ export class AssessmentService {
       throw new NotFoundException('Assessment not found');
     }
 
+    const wasCma = existing.type === 'CMA';
     const effectiveType = updates.type ?? existing.type;
-    const $set: Record<string, unknown> = {};
+
+    if (updates.preSurvey !== undefined && effectiveType !== 'CMA') {
+      throw new BadRequestException('preSurvey is only allowed for CMA assessments.');
+    }
 
     if (updates.name !== undefined) {
-      $set.name = updates.name;
+      existing.name = updates.name;
     }
     if (updates.description !== undefined) {
-      $set.description = updates.description;
+      existing.description = updates.description;
     }
     if (updates.instructions !== undefined) {
-      $set.instructions = updates.instructions;
+      existing.instructions = updates.instructions;
     }
     if (updates.type !== undefined) {
-      $set.type = updates.type;
+      existing.type = updates.type as typeof existing.type;
     }
     if (updates.sections !== undefined) {
-      $set.sections = updates.sections;
+      existing.sections = updates.sections as typeof existing.sections;
     }
-
     if (updates.preSurvey !== undefined) {
-      if (effectiveType !== 'CMA') {
-        throw new BadRequestException('preSurvey is only allowed for CMA assessments.');
-      }
-      $set.preSurvey = updates.preSurvey;
-    } else if (updates.type !== undefined && updates.type !== 'CMA' && existing.type === 'CMA') {
-      // Changing away from CMA — clear any existing pre-survey questions.
-      $set.preSurvey = [];
+      existing.preSurvey = updates.preSurvey as typeof existing.preSurvey;
+    } else if (updates.type !== undefined && updates.type !== 'CMA' && wasCma) {
+      existing.preSurvey = [];
     }
 
-    if (Object.keys($set).length === 0) {
+    const hasChanges = existing.isModified();
+    if (!hasChanges) {
       throw new BadRequestException('No update data provided');
     }
 
     try {
-      const assessment = await this.assessmentModel
-        .findByIdAndUpdate(id, { $set }, {
-          new: true,
-          runValidators: true,
-        })
-        .exec();
-
-      if (!assessment) {
-        throw new NotFoundException('Assessment not found');
-      }
-
-      return assessment;
+      return await existing.save();
     } catch (err: any) {
       if (err?.name === 'ValidationError') {
         const messages = Object.values(err.errors ?? {}).map(
@@ -891,20 +880,10 @@ export class AssessmentService {
       throw new BadRequestException('preSurvey is only allowed for CMA assessments.');
     }
 
+    existing.preSurvey = dto.preSurvey as typeof existing.preSurvey;
+
     try {
-      const assessment = await this.assessmentModel
-        .findByIdAndUpdate(
-          assessmentId,
-          { $set: { preSurvey: dto.preSurvey } },
-          { new: true, runValidators: true },
-        )
-        .exec();
-
-      if (!assessment) {
-        throw new NotFoundException('Assessment not found');
-      }
-
-      return assessment;
+      return await existing.save();
     } catch (err: any) {
       if (err?.name === 'ValidationError') {
         const messages = Object.values(err.errors ?? {}).map(

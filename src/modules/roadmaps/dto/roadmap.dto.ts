@@ -61,8 +61,13 @@ export class CheckboxExtraDto {
     @IsString()
     name: string;
 
+    @IsOptional()
+    @IsString()
+    checkboxLabel?: string;
+
+    @IsOptional()
     @IsBoolean()
-    haveButton: boolean;
+    haveButton?: boolean;
 
     @IsOptional()
     @IsString()
@@ -82,6 +87,10 @@ export class ExtraCheckboxEntryDto {
     @IsOptional()
     @IsString()
     name?: string;
+
+    @IsOptional()
+    @IsString()
+    checkboxLabel?: string;
 
     @IsOptional()
     @IsBoolean()

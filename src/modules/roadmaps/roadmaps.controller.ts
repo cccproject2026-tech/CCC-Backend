@@ -236,10 +236,13 @@ export class RoadMapsController {
     async getCommentThread(
         @Param('roadMapId', ParseMongoIdPipe) roadMapId: string,
         @Query('userId', ParseMongoIdPipe) userId: string,
+        @Query('nestedRoadMapItemId') nestedRoadMapItemId?: string,
+        @Query('taskId') taskId?: string,
     ): Promise<BaseResponse<CommentsThreadResponseDto>> {
         const thread = await this.roadMapsService.getCommentThread(
             roadMapId,
             userId,
+            nestedRoadMapItemId ?? taskId,
         );
         return {
             success: true,

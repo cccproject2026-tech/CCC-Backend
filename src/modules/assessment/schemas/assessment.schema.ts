@@ -130,16 +130,6 @@ export class Assessment {
   @Prop({
     type: [PreSurveyQuestionSchema],
     required: false,
-    validate: {
-      validator: function (this: Assessment, value: any) {
-        const arr = Array.isArray(value) ? value : [];
-        if (this.type === 'CMA') {
-          return value === undefined || value === null || Array.isArray(value);
-        }
-        return arr.length === 0;
-      },
-      message: () => 'preSurvey is only allowed for CMA assessments.',
-    },
   })
   preSurvey?: PreSurveyQuestion[];
 }
