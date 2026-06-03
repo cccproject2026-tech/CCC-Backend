@@ -1,5 +1,5 @@
-import { IsString, IsNotEmpty, IsArray, ValidateNested, IsIn, IsBoolean } from 'class-validator';
-import { Type } from 'class-transformer';
+import { IsString, IsNotEmpty, IsArray, ValidateNested, IsIn, IsBoolean, IsOptional } from 'class-validator';
+import { Transform, Type } from 'class-transformer';
 
 export class PreSurveyAnswerDto {
     @IsString()
@@ -28,9 +28,15 @@ export class PreSurveyQuestionDto {
     @IsIn(['text', 'number', 'date', 'select'])
     type: string;
 
+    @Transform(({ value }) => {
+        if (value === true || value === 'true') return true;
+        if (value === false || value === 'false') return false;
+        return value;
+    })
     @IsBoolean()
     required: boolean;
 
+    @IsOptional()
     @IsString()
     placeholder?: string;
 }

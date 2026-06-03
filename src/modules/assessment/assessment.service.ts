@@ -108,6 +108,12 @@ export class AssessmentService {
       throw new BadRequestException('Invalid assessment ID format');
     }
 
+    const existing = await this.assessmentModel.findById(id).exec();
+    if (!existing) {
+      throw new NotFoundException('Assessment not found');
+    }
+
+    const effectiveType = updates.type ?? existing.type;
     const $set: Record<string, unknown> = {};
 
     if (updates.name !== undefined) {
@@ -122,26 +128,48 @@ export class AssessmentService {
     if (updates.type !== undefined) {
       $set.type = updates.type;
     }
+    if (updates.sections !== undefined) {
+      $set.sections = updates.sections;
+    }
+
     if (updates.preSurvey !== undefined) {
+      if (effectiveType !== 'CMA') {
+        throw new BadRequestException('preSurvey is only allowed for CMA assessments.');
+      }
       $set.preSurvey = updates.preSurvey;
+    } else if (updates.type !== undefined && updates.type !== 'CMA' && existing.type === 'CMA') {
+      // Changing away from CMA — clear any existing pre-survey questions.
+      $set.preSurvey = [];
     }
 
     if (Object.keys($set).length === 0) {
       throw new BadRequestException('No update data provided');
     }
 
-    const assessment = await this.assessmentModel
-      .findByIdAndUpdate(id, { $set }, {
-        new: true,
-        runValidators: true,
-      })
-      .exec();
+    try {
+      const assessment = await this.assessmentModel
+        .findByIdAndUpdate(id, { $set }, {
+          new: true,
+          runValidators: true,
+        })
+        .exec();
 
-    if (!assessment) {
-      throw new NotFoundException('Assessment not found');
+      if (!assessment) {
+        throw new NotFoundException('Assessment not found');
+      }
+
+      return assessment;
+    } catch (err: any) {
+      if (err?.name === 'ValidationError') {
+        const messages = Object.values(err.errors ?? {}).map(
+          (e: { message?: string }) => e.message ?? 'Validation failed',
+        );
+        throw new BadRequestException(
+          messages.length > 0 ? messages : 'Validation failed',
+        );
+      }
+      throw err;
     }
-
-    return assessment;
   }
 
   async updateSections(
@@ -835,19 +863,39 @@ export class AssessmentService {
       throw new BadRequestException('preSurvey is required');
     }
 
-    const assessment = await this.assessmentModel
-      .findByIdAndUpdate(
-        assessmentId,
-        { $set: { preSurvey: dto.preSurvey } },
-        { new: true, runValidators: true },
-      )
-      .exec();
-
-    if (!assessment) {
+    const existing = await this.assessmentModel.findById(assessmentId).exec();
+    if (!existing) {
       throw new NotFoundException('Assessment not found');
     }
+    if (existing.type !== 'CMA') {
+      throw new BadRequestException('preSurvey is only allowed for CMA assessments.');
+    }
 
-    return assessment;
+    try {
+      const assessment = await this.assessmentModel
+        .findByIdAndUpdate(
+          assessmentId,
+          { $set: { preSurvey: dto.preSurvey } },
+          { new: true, runValidators: true },
+        )
+        .exec();
+
+      if (!assessment) {
+        throw new NotFoundException('Assessment not found');
+      }
+
+      return assessment;
+    } catch (err: any) {
+      if (err?.name === 'ValidationError') {
+        const messages = Object.values(err.errors ?? {}).map(
+          (e: { message?: string }) => e.message ?? 'Validation failed',
+        );
+        throw new BadRequestException(
+          messages.length > 0 ? messages : 'Validation failed',
+        );
+      }
+      throw err;
+    }
   }
 
   async getAssessmentRecommendations(

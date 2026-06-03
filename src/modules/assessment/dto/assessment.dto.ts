@@ -9,7 +9,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { VALID_ASSESSMENT_TYPES } from '../../../common/constants/status.constants';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import { Types } from 'mongoose';
 
 export class ChoiceDto {
@@ -52,6 +52,11 @@ export class PreSurveyQuestionDto {
   @IsString()
   placeholder?: string;
 
+  @Transform(({ value }) => {
+    if (value === true || value === 'true') return true;
+    if (value === false || value === 'false') return false;
+    return value;
+  })
   @IsBoolean()
   required: boolean;
 }
@@ -135,6 +140,12 @@ export class UpdateAssessmentDto {
   @ValidateNested({ each: true })
   @Type(() => PreSurveyQuestionDto)
   preSurvey?: PreSurveyQuestionDto[];
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => SectionDto)
+  sections?: SectionDto[];
 }
 
 export class SectionRecommendationDto {
