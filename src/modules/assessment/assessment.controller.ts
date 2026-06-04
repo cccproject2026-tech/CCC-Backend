@@ -12,8 +12,10 @@ import {
   UseInterceptors,
   UploadedFile,
   BadRequestException,
+  Req,
   // UseGuards,
 } from '@nestjs/common';
+import type { Request } from 'express';
 import { CreateAssessmentDto, SectionDto, UpdateAssessmentDto } from './dto/assessment.dto';
 import { Assessment } from './schemas/assessment.schema';
 import { AssessmentService } from './assessment.service';
@@ -72,8 +74,13 @@ export class AssessmentController {
   async updateAssessmentInstructions(
     @Param('id', ParseMongoIdPipe) id: string,
     @Body() dto: UpdateAssessmentDto,
+    @Req() req: Request,
   ): Promise<Assessment> {
-    return this.assessmentService.updateAssessment(id, dto);
+    return this.assessmentService.updateAssessment(
+      id,
+      this.withBodyTypeFallback(dto, req.body),
+      req.body as Record<string, unknown>,
+    );
   }
 
   @Patch(':id/sections')
@@ -230,8 +237,17 @@ export class AssessmentController {
   async updatePreSurvey(
     @Param('id', ParseMongoIdPipe) id: string,
     @Body() dto: UpdatePreSurveyDto,
+    @Req() req: Request,
   ): Promise<Assessment> {
-    return this.assessmentService.updatePreSurvey(id, dto);
+    const merged = this.withBodyTypeFallback(
+      dto as UpdateAssessmentDto,
+      req.body as Record<string, unknown>,
+    );
+    return this.assessmentService.updatePreSurvey(
+      id,
+      merged,
+      req.body as Record<string, unknown>,
+    );
   }
 
   @Patch(':id')
@@ -239,8 +255,28 @@ export class AssessmentController {
   async updateAssessment(
     @Param('id', ParseMongoIdPipe) id: string,
     @Body() dto: UpdateAssessmentDto,
+    @Req() req: Request,
   ): Promise<Assessment> {
-    return this.assessmentService.updateAssessment(id, dto);
+    return this.assessmentService.updateAssessment(
+      id,
+      this.withBodyTypeFallback(dto, req.body),
+      req.body as Record<string, unknown>,
+    );
+  }
+
+  /** Ensure `type` from raw JSON is not dropped before service effective-type logic runs. */
+  private withBodyTypeFallback(
+    dto: UpdateAssessmentDto,
+    raw?: Record<string, unknown>,
+  ): UpdateAssessmentDto {
+    if (dto.type?.trim()) {
+      return dto;
+    }
+    const rawType = raw?.type ?? raw?.assessmentType;
+    if (rawType != null && String(rawType).trim()) {
+      return { ...dto, type: String(rawType).trim() };
+    }
+    return dto;
   }
 
   @Get(':assessmentId/recommendation-rules')

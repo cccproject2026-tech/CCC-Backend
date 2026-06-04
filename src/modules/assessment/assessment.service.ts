@@ -9,7 +9,11 @@ import { Model, Types } from 'mongoose';
 import { Assessment, AssessmentDocument } from './schemas/assessment.schema';
 import { CreateAssessmentDto, SectionDto, SectionRecommendationDto, SectionRecommendationPreviewDto, SectionRecommendationRuleDto, UpdateAssessmentDto } from './dto/assessment.dto';
 import { User, UserDocument } from '../users/schemas/user.schema';
-import { ASSESSMENT_ASSIGNMENT_STATUSES } from '../../common/constants/status.constants';
+import {
+  ASSESSMENT_ASSIGNMENT_STATUSES,
+  VALID_ASSESSMENT_TYPES,
+  type AssessmentType,
+} from '../../common/constants/status.constants';
 import { UserAnswer } from './schemas/answer.schema';
 import { SubmitSectionAnswersDto } from './dto/submit-section-answers.dto';
 import { SubmitPreSurveyDto } from './dto/submit-pre-survey.dto';
@@ -52,6 +56,53 @@ export class AssessmentService {
   private isMentorTrackRole(role?: string): boolean {
     const r = (role ?? '').trim().toLowerCase();
     return r === ROLES.MENTOR || r === ROLES.FIELD_MENTOR;
+  }
+
+  /** Normalize assessment type for comparisons (CMA, PMP). */
+  private normalizeAssessmentType(type?: string | null): AssessmentType | null {
+    const normalized = (type ?? '').trim().toUpperCase();
+    if (!normalized) return null;
+    if (!VALID_ASSESSMENT_TYPES.includes(normalized as AssessmentType)) {
+      return null;
+    }
+    return normalized as AssessmentType;
+  }
+
+  /** Resolve type from PATCH body (`type` / `assessmentType`, including raw JSON fallback). */
+  private resolveIncomingAssessmentType(
+    updates: UpdateAssessmentDto,
+    rawBody?: Record<string, unknown>,
+  ): AssessmentType | undefined {
+    const candidates = [
+      updates.type,
+      (updates as { assessmentType?: string }).assessmentType,
+      rawBody?.type,
+      rawBody?.assessmentType,
+    ];
+    for (const raw of candidates) {
+      if (raw === undefined || raw === null) continue;
+      const normalized = this.normalizeAssessmentType(String(raw));
+      if (!normalized) {
+        throw new BadRequestException(
+          `Invalid assessment type. Allowed values: ${VALID_ASSESSMENT_TYPES.join(', ')}`,
+        );
+      }
+      return normalized;
+    }
+    return undefined;
+  }
+
+  /** Effective type for validation: incoming PATCH type wins over the stored document. */
+  private resolveEffectiveAssessmentType(
+    existingType: AssessmentType,
+    updates: UpdateAssessmentDto,
+    rawBody?: Record<string, unknown>,
+  ): AssessmentType {
+    return (
+      this.resolveIncomingAssessmentType(updates, rawBody) ??
+      this.normalizeAssessmentType(existingType) ??
+      existingType
+    );
   }
   async create(dto: CreateAssessmentDto): Promise<Assessment> {
     if (dto.type === 'CMA' && (!dto.preSurvey || dto.preSurvey.length === 0)) {
@@ -103,6 +154,7 @@ export class AssessmentService {
   async updateAssessment(
     id: string,
     updates: UpdateAssessmentDto,
+    rawBody?: Record<string, unknown>,
   ): Promise<Assessment> {
     if (!Types.ObjectId.isValid(id)) {
       throw new BadRequestException('Invalid assessment ID format');
@@ -114,10 +166,19 @@ export class AssessmentService {
     }
 
     const wasCma = existing.type === 'CMA';
-    const effectiveType = updates.type ?? existing.type;
+    const incomingType = this.resolveIncomingAssessmentType(updates, rawBody);
+    const effectiveType = this.resolveEffectiveAssessmentType(
+      existing.type,
+      updates,
+      rawBody,
+    );
 
     if (updates.preSurvey !== undefined && effectiveType !== 'CMA') {
       throw new BadRequestException('preSurvey is only allowed for CMA assessments.');
+    }
+
+    if (incomingType !== undefined) {
+      existing.type = incomingType;
     }
 
     if (updates.name !== undefined) {
@@ -129,15 +190,12 @@ export class AssessmentService {
     if (updates.instructions !== undefined) {
       existing.instructions = updates.instructions;
     }
-    if (updates.type !== undefined) {
-      existing.type = updates.type as typeof existing.type;
-    }
     if (updates.sections !== undefined) {
       existing.sections = updates.sections as typeof existing.sections;
     }
     if (updates.preSurvey !== undefined) {
       existing.preSurvey = updates.preSurvey as typeof existing.preSurvey;
-    } else if (updates.type !== undefined && updates.type !== 'CMA' && wasCma) {
+    } else if (incomingType !== undefined && incomingType !== 'CMA' && wasCma) {
       existing.preSurvey = [];
     }
 
@@ -862,7 +920,8 @@ export class AssessmentService {
 
   async updatePreSurvey(
     assessmentId: string,
-    dto: { preSurvey: any[] },
+    dto: UpdateAssessmentDto,
+    rawBody?: Record<string, unknown>,
   ): Promise<Assessment> {
     if (!Types.ObjectId.isValid(assessmentId)) {
       throw new BadRequestException('Invalid assessment ID format');
@@ -876,8 +935,19 @@ export class AssessmentService {
     if (!existing) {
       throw new NotFoundException('Assessment not found');
     }
-    if (existing.type !== 'CMA') {
+
+    const incomingType = this.resolveIncomingAssessmentType(dto, rawBody);
+    const effectiveType = this.resolveEffectiveAssessmentType(
+      existing.type,
+      dto,
+      rawBody,
+    );
+    if (effectiveType !== 'CMA') {
       throw new BadRequestException('preSurvey is only allowed for CMA assessments.');
+    }
+
+    if (incomingType !== undefined) {
+      existing.type = incomingType;
     }
 
     existing.preSurvey = dto.preSurvey as typeof existing.preSurvey;

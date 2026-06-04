@@ -12,6 +12,12 @@ import { VALID_ASSESSMENT_TYPES } from '../../../common/constants/status.constan
 import { Transform, Type } from 'class-transformer';
 import { Types } from 'mongoose';
 
+/** Read assessment type from the raw JSON before nested `preSurvey[].type` transforms run. */
+const assessmentTypeFromBody = ({ obj, value }: { obj?: Record<string, unknown>; value?: unknown }) => {
+  const raw = value ?? obj?.type ?? obj?.assessmentType;
+  return typeof raw === 'string' ? raw.trim() : raw;
+};
+
 export class ChoiceDto {
   @IsString()
   @IsNotEmpty()
@@ -130,9 +136,20 @@ export class UpdateAssessmentDto {
   instructions?: string[];
 
   @IsOptional()
+  @Transform(assessmentTypeFromBody)
   @IsString()
   @IsIn(VALID_ASSESSMENT_TYPES)
   type?: string;
+
+  /** Legacy alias; prefer `type`. */
+  @IsOptional()
+  @Transform(({ obj, value }) => {
+    const raw = value ?? obj?.assessmentType ?? obj?.type;
+    return typeof raw === 'string' ? raw.trim() : raw;
+  })
+  @IsString()
+  @IsIn(VALID_ASSESSMENT_TYPES)
+  assessmentType?: string;
 
   /** Replaces the full pre-survey question list. Send `[]` to clear when pre-survey is disabled. */
   @IsOptional()
