@@ -1,5 +1,6 @@
 import { IsString, IsNotEmpty, IsArray, ValidateNested, IsIn, IsBoolean, IsOptional } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
+import { VALID_ASSESSMENT_TYPES } from '../../../common/constants/status.constants';
 
 export class PreSurveyAnswerDto {
     @IsString()
@@ -42,6 +43,24 @@ export class PreSurveyQuestionDto {
 }
 
 export class UpdatePreSurveyDto {
+    @IsOptional()
+    @Transform(({ obj, value }) => {
+        const raw = value ?? obj?.type ?? obj?.assessmentType;
+        return typeof raw === 'string' ? raw.trim() : raw;
+    })
+    @IsString()
+    @IsIn(VALID_ASSESSMENT_TYPES)
+    type?: string;
+
+    @IsOptional()
+    @Transform(({ obj, value }) => {
+        const raw = value ?? obj?.assessmentType ?? obj?.type;
+        return typeof raw === 'string' ? raw.trim() : raw;
+    })
+    @IsString()
+    @IsIn(VALID_ASSESSMENT_TYPES)
+    assessmentType?: string;
+
     /** Full replacement list; send `[]` to clear pre-survey questions. */
     @IsArray()
     @ValidateNested({ each: true })
