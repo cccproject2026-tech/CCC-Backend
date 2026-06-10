@@ -1,4 +1,5 @@
 import { NestFactory } from '@nestjs/core';
+import { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
 import { ValidationPipe, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -6,14 +7,20 @@ import helmet from 'helmet';
 import compression from 'compression';
 import { HttpExceptionFilter } from './common/filters';
 
+/** JSON payloads include base64 digital signatures from roadmap forms. */
+const REQUEST_BODY_LIMIT = '10mb';
+
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
 
-  const app = await NestFactory.create(AppModule, {
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     logger: ['error', 'warn', 'log', 'debug', 'verbose'],
     cors: false,
     rawBody: true, // for zoom webhook
   });
+
+  app.useBodyParser('json', { limit: REQUEST_BODY_LIMIT });
+  app.useBodyParser('urlencoded', { limit: REQUEST_BODY_LIMIT, extended: true });
 
   const configService = app.get(ConfigService);
   const nodeEnv = configService.get<string>('nodeEnv', 'development');
