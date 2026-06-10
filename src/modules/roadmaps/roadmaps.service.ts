@@ -26,7 +26,11 @@ import { toObjectId } from 'src/common/pipes/to-object-id.pipe';
 import { User, UserDocument } from '../users/schemas/user.schema';
 import { Availability, AvailabilityDocument } from '../appointments/schemas/availability.schema';
 import { Appointment, AppointmentDocument } from '../appointments/schemas/appointment.schema';
-import { buildMeetingDate, normalizeRoadmapName, SESSION_FLOW, SESSION_NOTES } from './utils/helper';
+import { normalizeRoadmapName, SESSION_FLOW, SESSION_NOTES } from './utils/helper';
+import {
+    buildIstSlotStartUtcFromDayDate,
+    HourSlot,
+} from '../appointments/utils/availability.utils';
 import { AppointmentsService } from '../appointments/appointments.service';
 import { S3Service } from '../s3/s3.service';
 import { MailerService } from '../../common/utils/mail.util';
@@ -77,12 +81,7 @@ const JUMPSTART_NO_SLOTS_MSG =
 const JUMPSTART_NO_SLOTS_NOTICE_MSG =
     'No available mentoring slots were found that satisfy the minimum scheduling notice period.';
 
-type AvailabilitySlotLike = {
-    startTime: string;
-    startPeriod: string;
-    endTime?: string;
-    endPeriod?: string;
-};
+type AvailabilitySlotLike = HourSlot;
 
 type AvailabilityDayLike = {
     date: Date;
@@ -223,7 +222,7 @@ export class RoadMapsService {
     }
 
     private slotMeetingTimeMs(day: AvailabilityDayLike, slot: AvailabilitySlotLike): number {
-        return buildMeetingDate(day.date, slot).getTime();
+        return buildIstSlotStartUtcFromDayDate(day.date, slot).getTime();
     }
 
     private sortSlotsForDay(
@@ -291,7 +290,7 @@ export class RoadMapsService {
 
             const slots = this.sortSlotsForDay(day, day.slots ?? []);
             for (const slot of slots) {
-                const tryDate = buildMeetingDate(day.date, slot);
+                const tryDate = buildIstSlotStartUtcFromDayDate(day.date, slot);
                 if (tryDate.getTime() < earliestAllowedMs) {
                     continue;
                 }

@@ -27,6 +27,7 @@ import {
     buildSlotDate,
     consolidateTemplateSlotsByUtcWeekday,
     convertSlotToMinutes,
+    buildIstSlotStartUtc,
     dateKeyUtcForInput,
     generateMonthlyAvailability,
     getWeekRange,
@@ -58,6 +59,11 @@ import {
 export class AppointmentsService {
     private readonly logger = new Logger(AppointmentsService.name);
     private static readonly IST_OFFSET_MINUTES = 330;
+
+    /** @see buildIstSlotStartUtc in availability.utils — IST wall-clock slot → UTC instant. */
+    buildIstSlotStartUtc(dateStr: string, slot: HourSlot): Date {
+        return buildIstSlotStartUtc(dateStr, slot);
+    }
 
     constructor(
         @InjectModel(Appointment.name) private appointmentModel: Model<AppointmentDocument>,
@@ -360,31 +366,6 @@ export class AppointmentsService {
         const dayEndUtc = new Date(dayStartUtc.getTime() + 24 * 60 * 60 * 1000 - 1);
         const scanEndUtc = new Date(dayEndUtc.getTime() + durationMinutes * 60_000);
         return { dayStartUtc, scanEndUtc };
-    }
-
-    private buildIstSlotStartUtc(dateStr: string, slot: HourSlot): Date {
-        const [y, m, d] = dateStr.split('-').map((x) => Number(x));
-        if (!y || !m || !d) {
-            throw new BadRequestException(`Invalid date key: ${dateStr}`);
-        }
-        const hour12 = parseInt(slot.startTime, 10);
-        if (!Number.isFinite(hour12)) {
-            throw new BadRequestException(`Invalid slot start time: ${slot.startTime}`);
-        }
-        const minutePart = slot.startTime.includes(':') ? Number(slot.startTime.split(':')[1]) : 0;
-        if (!Number.isFinite(minutePart)) {
-            throw new BadRequestException(`Invalid slot start minutes: ${slot.startTime}`);
-        }
-        const hour24 =
-            slot.startPeriod === 'PM'
-                ? (hour12 % 12) + 12
-                : hour12 === 12
-                  ? 0
-                  : hour12;
-        return new Date(
-            Date.UTC(y, m - 1, d, hour24, minutePart, 0, 0) -
-                AppointmentsService.IST_OFFSET_MINUTES * 60_000,
-        );
     }
 
     private async syncGoogleCalendarAfterBooking(params: {

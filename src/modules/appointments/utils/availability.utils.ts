@@ -197,6 +197,50 @@ export function dateKeyUtcForInput(dateInput: string): string {
     return d.toISOString().split('T')[0];
 }
 
+/** IST is UTC+5:30 — matches manual booking and {@link AppointmentsService.buildIstSlotStartUtc}. */
+export const IST_OFFSET_MINUTES = 330;
+
+/**
+ * IST wall-clock slot start as UTC instant (same semantics as manual appointment booking).
+ * Example: 2026-06-10 9:00 PM IST → 2026-06-10T15:30:00.000Z
+ */
+export function buildIstSlotStartUtc(dateStr: string, slot: HourSlot): Date {
+    const [y, m, d] = dateStr.split('-').map((x) => Number(x));
+    if (!y || !m || !d) {
+        throw new Error(`Invalid date key: ${dateStr}`);
+    }
+    const hour12 = parseInt(slot.startTime, 10);
+    if (!Number.isFinite(hour12)) {
+        throw new Error(`Invalid slot start time: ${slot.startTime}`);
+    }
+    const minutePart = slot.startTime.includes(':')
+        ? Number(slot.startTime.split(':')[1])
+        : 0;
+    if (!Number.isFinite(minutePart)) {
+        throw new Error(`Invalid slot start minutes: ${slot.startTime}`);
+    }
+    const hour24 =
+        slot.startPeriod === 'PM'
+            ? (hour12 % 12) + 12
+            : hour12 === 12
+              ? 0
+              : hour12;
+    return new Date(
+        Date.UTC(y, m - 1, d, hour24, minutePart, 0, 0) -
+            IST_OFFSET_MINUTES * 60_000,
+    );
+}
+
+/** Resolve a weekly availability `day.date` + slot to the UTC instant for booking. */
+export function buildIstSlotStartUtcFromDayDate(
+    dayDate: Date | string,
+    slot: HourSlot,
+): Date {
+    const iso =
+        dayDate instanceof Date ? dayDate.toISOString() : String(dayDate);
+    return buildIstSlotStartUtc(dateKeyUtcForInput(iso), slot);
+}
+
 /** Consolidate arbitrary calendar rows into weekday → merged raw-slot lists (UTC). */
 export function consolidateTemplateSlotsByUtcWeekday(
     rows: { date: string; slots: HourSlot[] }[],
