@@ -43,6 +43,12 @@ function resolveDefaultSteps(totalSteps?: number, extras?: any[]): number {
 
 const MENTORING_JOURNEY_SESSION_MAX = SESSION_NOTES.length;
 
+const JUMPSTART_MENTOR_NO_AVAILABILITY_MSG =
+    'Your assigned mentor has not configured availability. Please ask your mentor to set availability before completing Jumpstart.';
+
+const JUMPSTART_NO_MENTOR_MSG =
+    'No mentor is assigned to your account. Please contact support before completing Jumpstart.';
+
 @Injectable()
 export class RoadMapsService {
     private readonly logger = new Logger(RoadMapsService.name);
@@ -1014,6 +1020,14 @@ export class RoadMapsService {
                 ? { ...extra, signedAt: now }
                 : extra
         );
+
+        await this.assertMentorAvailabilityBeforeJumpstartCompletion(
+            userObjectId,
+            userIdString,
+            roadMapObjectId,
+            newExtras.length,
+        );
+
         let savedExtras: any;
         try {
             savedExtras = await this.extrasModel.create({
@@ -1129,6 +1143,13 @@ export class RoadMapsService {
                 : extra
         );
         const newItemsCount = incomingExtras.length;
+
+        await this.assertMentorAvailabilityBeforeJumpstartCompletion(
+            userObjectId,
+            userIdString,
+            roadMapObjectId,
+            newItemsCount,
+        );
 
         const updatedExtras = await this.extrasModel.findOneAndUpdate(
             query,
@@ -1840,6 +1861,73 @@ export class RoadMapsService {
             const msg = err instanceof Error ? err.message : String(err);
             this.logger.error(`Jumpstart Session 1 sync failed for pastor ${pastorIdStr}: ${msg}`);
         }
+    }
+
+    /**
+     * Blocks Jumpstart (“single” roadmap) completion when the assigned mentor has no availability.
+     * Must run before extras/progress writes so roadmap completion and Session 1 are not partially applied.
+     */
+    private async assertMentorAvailabilityBeforeJumpstartCompletion(
+        pastorUserIdObjectId: Types.ObjectId,
+        pastorUserIdString: string | undefined,
+        roadMapObjectId: Types.ObjectId,
+        additionalCompletedSteps: number,
+    ): Promise<void> {
+        const roadmapRow = await this.roadMapModel
+            .findById(roadMapObjectId)
+            .select('type')
+            .lean()
+            .exec();
+
+        if (roadmapRow?.type?.trim()?.toLowerCase() !== 'single') {
+            return;
+        }
+
+        const userIdFlexibleQuery = {
+            $or: [
+                { userId: pastorUserIdObjectId },
+                ...(pastorUserIdString ? [{ userId: pastorUserIdString }] : []),
+            ],
+        };
+
+        const progress = await this.progressModel.findOne(userIdFlexibleQuery).lean().exec();
+        const entry = progress?.roadmaps?.find(
+            (r: { roadMapId: Types.ObjectId }) =>
+                r.roadMapId.toString() === roadMapObjectId.toString(),
+        );
+
+        const totalSteps = typeof entry?.totalSteps === 'number' ? entry.totalSteps : 0;
+        if (!entry || totalSteps <= 0) {
+            return;
+        }
+
+        const projectedCompleted = (entry.completedSteps ?? 0) + additionalCompletedSteps;
+        if (projectedCompleted < totalSteps) {
+            return;
+        }
+
+        const pastor = await this.userModel
+            .findById(pastorUserIdObjectId)
+            .select('assignedId role')
+            .lean()
+            .exec();
+
+        if (!pastor || pastor.role !== ROLES.PASTOR) {
+            return;
+        }
+
+        const mentorRef = pastor.assignedId?.[0];
+        if (!mentorRef) {
+            throw new BadRequestException(JUMPSTART_NO_MENTOR_MSG);
+        }
+
+        const mentorIdStr =
+            mentorRef instanceof Types.ObjectId ? mentorRef.toString() : String(mentorRef);
+
+        await this.appointmentService.assertMentorHasAvailabilitySet(
+            mentorIdStr,
+            JUMPSTART_MENTOR_NO_AVAILABILITY_MSG,
+        );
     }
 
     /** After extras write: if this is the onboarding (“single”) roadmap and it is finished, anchor Session 1. */

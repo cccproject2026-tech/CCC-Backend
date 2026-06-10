@@ -2098,6 +2098,18 @@ export class AppointmentsService {
     }
 
     /**
+     * Same availability gate as non-host-initiated {@link create} and mentoring session scheduling.
+     */
+    async assertMentorHasAvailabilitySet(mentorId: string, message?: string): Promise<void> {
+        const availability = await this.availabilityModel
+            .findOne({ mentorId: new Types.ObjectId(mentorId) })
+            .lean();
+        if (!availability) {
+            throw new BadRequestException(message ?? 'Mentor has no availability set.');
+        }
+    }
+
+    /**
      * CCC mentor availability plus Google Calendar busy intervals for merge on the client (opaque busy
      * windows only — Google FreeBusy does **not** expose event titles/details).
      * Path `userId` = host Mentor (or Mentor-shaped host) Mongo id.
