@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { RoadMap, RoadMapDocument } from './schemas/roadmap.schema';
@@ -70,6 +71,32 @@ const JUMPSTART_MENTOR_NO_AVAILABILITY_MSG =
 const JUMPSTART_NO_MENTOR_MSG =
     'No mentor is assigned to your account. Please contact support before completing Jumpstart.';
 
+const JUMPSTART_NO_SLOTS_MSG =
+    'No available mentoring slots were found for the assigned mentor. Please ask the mentor to update their availability.';
+
+const JUMPSTART_NO_SLOTS_NOTICE_MSG =
+    'No available mentoring slots were found that satisfy the minimum scheduling notice period.';
+
+type AvailabilitySlotLike = {
+    startTime: string;
+    startPeriod: string;
+    endTime?: string;
+    endPeriod?: string;
+};
+
+type AvailabilityDayLike = {
+    date: Date;
+    unavailable?: boolean;
+    slots?: AvailabilitySlotLike[];
+};
+
+type MentorSlotBookingResult = {
+    appointment: { id: string };
+    meetingDate: Date;
+    selectedSlot: AvailabilitySlotLike;
+    selectedDay: AvailabilityDayLike;
+};
+
 @Injectable()
 export class RoadMapsService {
     private readonly logger = new Logger(RoadMapsService.name);
@@ -86,7 +113,42 @@ export class RoadMapsService {
         private readonly s3Service: S3Service,
         private readonly appointmentService: AppointmentsService,
         private readonly mailer: MailerService,
+        private readonly configService: ConfigService,
     ) { }
+
+    /** Hours after Jumpstart completion before Session 1 may start (`JUMPSTART_MIN_NOTICE_HOURS`, default 2). */
+    private getJumpstartMinNoticeHours(): number {
+        const raw = this.configService.get<number | string>('jumpstart.minNoticeHours');
+        const parsed = typeof raw === 'number' ? raw : parseFloat(String(raw ?? '2'));
+        return Number.isFinite(parsed) && parsed >= 0 ? parsed : 2;
+    }
+
+    private async assertJumpstartFirstBookableSlot(
+        mentorIdStr: string,
+        pastorUserIdStr: string,
+    ): Promise<void> {
+        const minNoticeHours = this.getJumpstartMinNoticeHours();
+        const slotNotes = 'Mentoring Session 1 scheduled from Jumpstart completion.';
+
+        const withNotice = await this.findFirstBookableMentorSlot(mentorIdStr, pastorUserIdStr, {
+            notes: slotNotes,
+            book: false,
+            minNoticeHours,
+        });
+        if (withNotice) {
+            return;
+        }
+
+        const withoutNotice = await this.findFirstBookableMentorSlot(mentorIdStr, pastorUserIdStr, {
+            notes: slotNotes,
+            book: false,
+        });
+        if (withoutNotice) {
+            throw new BadRequestException(JUMPSTART_NO_SLOTS_NOTICE_MSG);
+        }
+
+        throw new BadRequestException(JUMPSTART_NO_SLOTS_MSG);
+    }
 
     private excerpt(raw: string, max = 500): string {
         const text = (raw ?? '').trim();
@@ -146,6 +208,163 @@ export class RoadMapsService {
             isSessionBooking: true,
         });
         return { id: created.id };
+    }
+
+    private toMentorObjectId(mentorId: Types.ObjectId | string): Types.ObjectId {
+        return mentorId instanceof Types.ObjectId
+            ? mentorId
+            : new Types.ObjectId(String(mentorId));
+    }
+
+    private sortAvailabilityDays(days: AvailabilityDayLike[]): AvailabilityDayLike[] {
+        return [...days].sort(
+            (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime(),
+        );
+    }
+
+    private slotMeetingTimeMs(day: AvailabilityDayLike, slot: AvailabilitySlotLike): number {
+        return buildMeetingDate(day.date, slot).getTime();
+    }
+
+    private sortSlotsForDay(
+        day: AvailabilityDayLike,
+        slots: AvailabilitySlotLike[],
+    ): AvailabilitySlotLike[] {
+        return [...slots].sort(
+            (a, b) => this.slotMeetingTimeMs(day, a) - this.slotMeetingTimeMs(day, b),
+        );
+    }
+
+    private async mentorSlotHasOverlap(
+        mentorOid: Types.ObjectId,
+        tryDate: Date,
+        durationMinutes: number,
+    ): Promise<boolean> {
+        const endTime = new Date(tryDate.getTime() + durationMinutes * 60000);
+        const overlap = await this.appointmentModel.findOne({
+            mentorId: mentorOid,
+            meetingDate: { $lt: endTime },
+            endTime: { $gt: tryDate },
+            status: {
+                $in: [APPOINTMENT_STATUSES.SCHEDULED, APPOINTMENT_STATUSES.IN_PROGRESS],
+            },
+        });
+        return Boolean(overlap);
+    }
+
+    private isSlotBookingConflictError(err: unknown): boolean {
+        const msg = err instanceof Error ? err.message : String(err);
+        return (
+            msg.includes('already booked') ||
+            msg.includes('not available') ||
+            msg.includes('maximum bookings')
+        );
+    }
+
+    /**
+     * Walks mentor weekly availability in chronological order and returns the first future
+     * bookable slot. Shared by Jumpstart Session 1, {@link getMentorFromPastor}, and redo flows.
+     */
+    private async findFirstBookableMentorSlot(
+        mentorId: Types.ObjectId | string,
+        pastorUserId: string,
+        options: { notes: string; book: boolean; minNoticeHours?: number },
+    ): Promise<MentorSlotBookingResult | null> {
+        const mentorOid = this.toMentorObjectId(mentorId);
+        const availability = await this.availabilityModel.findOne({ mentorId: mentorOid }).lean().exec();
+        if (!availability?.weeklySlots?.length) {
+            return null;
+        }
+
+        const now = Date.now();
+        const earliestAllowedMs =
+            options.minNoticeHours != null && options.minNoticeHours > 0
+                ? now + options.minNoticeHours * 60 * 60 * 1000
+                : now;
+        const durationMinutes = availability.meetingDuration ?? 60;
+        const days = this.sortAvailabilityDays(availability.weeklySlots as AvailabilityDayLike[]);
+
+        for (const day of days) {
+            if (day.unavailable) {
+                continue;
+            }
+
+            const slots = this.sortSlotsForDay(day, day.slots ?? []);
+            for (const slot of slots) {
+                const tryDate = buildMeetingDate(day.date, slot);
+                if (tryDate.getTime() < earliestAllowedMs) {
+                    continue;
+                }
+
+                if (!options.book) {
+                    const hasOverlap = await this.mentorSlotHasOverlap(
+                        mentorOid,
+                        tryDate,
+                        durationMinutes,
+                    );
+                    if (hasOverlap) {
+                        continue;
+                    }
+
+                    return {
+                        appointment: { id: '' },
+                        meetingDate: tryDate,
+                        selectedSlot: slot,
+                        selectedDay: day,
+                    };
+                }
+
+                try {
+                    const appointment = await this.appointmentService.create({
+                        userId: pastorUserId,
+                        mentorId: mentorOid.toString(),
+                        meetingDate: tryDate.toISOString(),
+                        platform: APPOINTMENT_PLATFORMS.ZOOM,
+                        notes: options.notes,
+                        initiatorRole: 'director',
+                        isSessionBooking: true,
+                    });
+
+                    return {
+                        appointment: { id: appointment.id },
+                        meetingDate: tryDate,
+                        selectedSlot: slot,
+                        selectedDay: day,
+                    };
+                } catch (err: unknown) {
+                    if (this.isSlotBookingConflictError(err)) {
+                        continue;
+                    }
+                    throw err;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private async removeBookedSlotFromMentorAvailability(
+        mentorId: Types.ObjectId | string,
+        selectedDay: AvailabilityDayLike,
+        selectedSlot: AvailabilitySlotLike,
+    ): Promise<void> {
+        const mentorOid = this.toMentorObjectId(mentorId);
+        await this.availabilityModel.updateOne(
+            { mentorId: mentorOid },
+            {
+                $pull: {
+                    'weeklySlots.$[day].slots': {
+                        startTime: selectedSlot.startTime,
+                        startPeriod: selectedSlot.startPeriod,
+                        endTime: selectedSlot.endTime,
+                        endPeriod: selectedSlot.endPeriod,
+                    },
+                },
+            },
+            {
+                arrayFilters: [{ 'day.date': selectedDay.date }],
+            },
+        );
     }
 
     async create(dto: CreateRoadMapDto, image?: Express.Multer.File): Promise<RoadMapResponseDto> {
@@ -1684,13 +1903,10 @@ export class RoadMapsService {
     }
 
     /**
-     * Syncs mentoring **Session 1** to Jumpstart/onboarding (“single roadmap”) completion:
-     * `scheduledDate`, linked appointment `meetingDate`, and status SCHEDULED vs MISSED (if anchor is already past).
+     * Syncs mentoring **Session 1** to Jumpstart/onboarding (“single roadmap”) completion using
+     * the mentor's first available future slot (same selection rules as Sessions 2+).
      */
-    async upsertMentoringSessionOneFromJumpstart(
-        pastorIdStr: string,
-        jumpstartCompletedAt: Date,
-    ): Promise<void> {
+    async upsertMentoringSessionOneFromJumpstart(pastorIdStr: string): Promise<void> {
         try {
             const pastorOid = new Types.ObjectId(pastorIdStr);
 
@@ -1720,59 +1936,50 @@ export class RoadMapsService {
             let extrasDocs = await this.extrasModel.find({ userId: pastorOid }).exec();
             let located = this.locatePastorMentoringSessionOneSync(extrasDocs, 1);
 
-            const anchor = new Date(jumpstartCompletedAt.getTime());
-
-            const availability = await this.availabilityModel.findOne({ mentorId: mentorOid }).lean().exec();
-            const durationMinutes = availability?.meetingDuration ?? 60;
-            const endTime = new Date(anchor.getTime() + durationMinutes * 60000);
-
-            const nowMs = Date.now();
-            const appointmentStatus =
-                anchor.getTime() < nowMs ? APPOINTMENT_STATUSES.MISSED : APPOINTMENT_STATUSES.SCHEDULED;
-
-            if (located) {
-                let apptStr: string | null = null;
+            const resolveExistingAppointmentId = async (): Promise<string | null> => {
+                if (!located) return null;
                 const rawAid = located.appointmentIdRaw;
+                let apptStr: string | null = null;
                 if (typeof rawAid === 'string' && Types.ObjectId.isValid(rawAid)) apptStr = rawAid;
                 else if (rawAid instanceof Types.ObjectId) apptStr = rawAid.toString();
 
-                let existingLean =
-                    apptStr && Types.ObjectId.isValid(apptStr)
-                        ? await this.appointmentModel.findById(apptStr).lean().exec()
-                        : null;
+                if (!apptStr || !Types.ObjectId.isValid(apptStr)) return null;
 
-                if (!existingLean) {
-                    const createdMissing = await this.createMentoringSessionAppointment(
-                        pastorOid,
-                        mentorOid,
-                        anchor,
-                        'Mentoring Session 1 anchored to Jumpstart completion.',
-                    );
-                    located.dataRef.appointmentId = createdMissing.id;
-                    located.dataRef.originalDate = anchor;
-                    located.dataRef.scheduledDate = anchor;
-                    located.dataRef.status = appointmentStatus;
-                    located.doc.extras![located.idx] = {
-                        ...(located.doc.extras![located.idx] as object),
-                        type: 'APPOINTMENT',
-                        data: located.dataRef,
-                    } as never;
-                    located.doc.markModified('extras');
-                    await located.doc.save();
-                    return;
+                const existingLean = await this.appointmentModel.findById(apptStr).lean().exec();
+                return existingLean ? apptStr : null;
+            };
+
+            let existingAppointmentId = await resolveExistingAppointmentId();
+
+            let booking: MentorSlotBookingResult | null = null;
+            if (!existingAppointmentId) {
+                booking = await this.findFirstBookableMentorSlot(mentorOid, pastorIdStr, {
+                    notes: 'Mentoring Session 1 scheduled from Jumpstart completion.',
+                    book: true,
+                    minNoticeHours: this.getJumpstartMinNoticeHours(),
+                });
+
+                if (!booking) {
+                    throw new BadRequestException(JUMPSTART_NO_SLOTS_MSG);
                 }
 
-                await this.appointmentModel.updateOne(
-                    { _id: new Types.ObjectId(apptStr!) },
-                    {
-                        $set: {
-                            meetingDate: anchor,
-                            endTime,
-                            status: appointmentStatus,
-                        },
-                    },
+                await this.removeBookedSlotFromMentorAvailability(
+                    mentorOid,
+                    booking.selectedDay,
+                    booking.selectedSlot,
                 );
+                existingAppointmentId = booking.appointment.id;
+            }
 
+            if (!booking) {
+                return;
+            }
+
+            const anchor = booking.meetingDate;
+            const appointmentStatus = APPOINTMENT_STATUSES.SCHEDULED;
+
+            if (located) {
+                located.dataRef.appointmentId = existingAppointmentId;
                 located.dataRef.originalDate = anchor;
                 located.dataRef.scheduledDate = anchor;
                 located.dataRef.status = appointmentStatus;
@@ -1797,38 +2004,7 @@ export class RoadMapsService {
             located = this.locatePastorMentoringSessionOneSync(extrasDocs, 1);
 
             if (located) {
-                let apptStr: string | null = null;
-                const rawAid = located.appointmentIdRaw;
-                if (typeof rawAid === 'string' && Types.ObjectId.isValid(rawAid)) apptStr = rawAid;
-                else if (rawAid instanceof Types.ObjectId) apptStr = rawAid.toString();
-
-                const existingLean =
-                    apptStr && Types.ObjectId.isValid(apptStr)
-                        ? await this.appointmentModel.findById(apptStr).lean().exec()
-                        : null;
-
-                if (existingLean) {
-                    await this.appointmentModel.updateOne(
-                        { _id: new Types.ObjectId(apptStr!) },
-                        {
-                            $set: {
-                                meetingDate: anchor,
-                                endTime,
-                                status: appointmentStatus,
-                            },
-                        },
-                    );
-                } else {
-                    const createdMissing = await this.createMentoringSessionAppointment(
-                        pastorOid,
-                        mentorOid,
-                        anchor,
-                        'Mentoring Session 1 anchored to Jumpstart completion.',
-                    );
-                    apptStr = createdMissing.id;
-                    located.dataRef.appointmentId = apptStr;
-                }
-
+                located.dataRef.appointmentId = existingAppointmentId;
                 located.dataRef.originalDate = anchor;
                 located.dataRef.scheduledDate = anchor;
                 located.dataRef.status = appointmentStatus;
@@ -1841,13 +2017,6 @@ export class RoadMapsService {
                 await located.doc.save();
                 return;
             }
-
-            const created = await this.createMentoringSessionAppointment(
-                pastorOid,
-                mentorOid,
-                anchor,
-                'Mentoring Session 1 anchored to Jumpstart completion.',
-            );
 
             let extrasDoc = await this.extrasModel.findOne(extrasQuery).exec();
             if (!extrasDoc) {
@@ -1864,7 +2033,7 @@ export class RoadMapsService {
                 data: {
                     sessionNumber: 1,
                     title: 'Session 1',
-                    appointmentId: created.id,
+                    appointmentId: booking.appointment.id,
                     originalDate: anchor,
                     scheduledDate: anchor,
                     isCompleted: false,
@@ -1956,6 +2125,9 @@ export class RoadMapsService {
             mentorIdStr,
             JUMPSTART_MENTOR_NO_AVAILABILITY_MSG,
         );
+
+        const pastorUserIdStr = pastorUserIdString ?? pastorUserIdObjectId.toString();
+        await this.assertJumpstartFirstBookableSlot(mentorIdStr, pastorUserIdStr);
     }
 
     /** After extras write: if this is the onboarding (“single”) roadmap and it is finished, anchor Session 1. */
@@ -2008,7 +2180,7 @@ export class RoadMapsService {
             return;
         }
 
-        await this.upsertMentoringSessionOneFromJumpstart(pastorUserIdObjectId.toString(), new Date());
+        await this.upsertMentoringSessionOneFromJumpstart(pastorUserIdObjectId.toString());
     }
 
     async getUserRoadmaps(userId: string) {
@@ -2154,72 +2326,18 @@ export class RoadMapsService {
             });
         }
 
-        let appointment: any = null;
-        let meetingDate: Date | null = null;
-        let selectedSlot: any = null;
-        let selectedDay: any = null;
+        const booking = await this.findFirstBookableMentorSlot(mentorId, userId, {
+            notes: 'Auto scheduled',
+            book: true,
+        });
 
-        for (const day of availability.weeklySlots) {
-            if ((day as { unavailable?: boolean }).unavailable) {
-                continue;
-            }
-            for (const slot of day.slots || []) {
-
-                const tryDate = buildMeetingDate(day.date, slot);
-
-                try {
-                    appointment = await this.appointmentService.create({
-                        userId: userId.toString(),
-                        mentorId: mentorId.toString(),
-                        meetingDate: tryDate.toISOString(),
-                        platform: 'zoom',
-                        notes: "Auto scheduled",
-                        initiatorRole: 'director',
-                        isSessionBooking: true
-                    });
-
-                    meetingDate = tryDate;
-                    selectedSlot = slot;
-                    selectedDay = day;
-
-                    break;
-
-                } catch (err: any) {
-
-                    if (err.message?.includes("already booked")) {
-                        continue; // try next slot
-                    }
-
-                    throw err;
-                }
-            }
-
-            if (appointment) break;
+        if (!booking) {
+            throw new BadRequestException('No free slots available');
         }
 
-        if (!appointment || !meetingDate) {
-            throw new BadRequestException("No free slots available");
-        }
+        const { appointment, meetingDate, selectedSlot, selectedDay } = booking;
 
-        // REMOVE USED SLOT (IMPORTANT FIX)
-        await this.availabilityModel.updateOne(
-            { mentorId },
-            {
-                $pull: {
-                    "weeklySlots.$[day].slots": {
-                        startTime: selectedSlot.startTime,
-                        startPeriod: selectedSlot.startPeriod,
-                        endTime: selectedSlot.endTime,
-                        endPeriod: selectedSlot.endPeriod
-                    }
-                }
-            },
-            {
-                arrayFilters: [
-                    { "day.date": selectedDay.date }
-                ]
-            }
-        );
+        await this.removeBookedSlotFromMentorAvailability(mentorId, selectedDay, selectedSlot);
 
         // DISABLE OLD REDO
         await this.extrasModel.updateOne(
@@ -2375,54 +2493,18 @@ export class RoadMapsService {
             throw new BadRequestException('No availability');
         }
 
-        // pick slot
-        let selectedDay: any = null;
-        let selectedSlot: any = null;
-        let appointment: any = null;
-        let meetingDate: Date | null = null;
+        const booking = await this.findFirstBookableMentorSlot(mentorId, extrasDoc.userId.toString(), {
+            notes: 'Redo session',
+            book: true,
+        });
 
-        for (const day of availability.weeklySlots) {
-            if ((day as { unavailable?: boolean }).unavailable) {
-                continue;
-            }
-            for (const slot of day.slots || []) {
-
-                const tryDate = buildMeetingDate(day.date, slot);
-
-                try {
-                    appointment = await this.appointmentService.create({
-                        userId: extrasDoc.userId.toString(),
-                        mentorId: mentorId.toString(),
-                        meetingDate: tryDate.toISOString(),
-                        platform: 'zoom',
-                        notes: "Redo session",
-                        initiatorRole: 'director'
-                    });
-
-                    meetingDate = tryDate;
-                    selectedSlot = slot;
-                    selectedDay = day;
-
-                    break;
-
-                } catch (err: any) {
-                    if (err.message?.includes("already booked")) {
-                        continue;
-                    }
-                    throw err;
-                }
-            }
-
-            if (appointment) break;
+        if (!booking) {
+            throw new BadRequestException('No free slot found');
         }
 
-        if (!appointment) {
-            throw new BadRequestException("No free slot found");
-        }
+        const { appointment, meetingDate, selectedSlot, selectedDay } = booking;
 
-        if (!selectedDay || !selectedSlot) {
-            throw new BadRequestException('No slot found');
-        }
+        await this.removeBookedSlotFromMentorAvailability(mentorId, selectedDay, selectedSlot);
 
         await this.extrasModel.updateOne(
             {

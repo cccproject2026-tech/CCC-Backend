@@ -63,6 +63,11 @@ export default () => ({
     },
 
     /** After Google Calendar OAuth callback; append `googleCalendar=linked` or `googleCalendar=error`. */
+    /** Jumpstart Session 1 auto-scheduling: minimum hours after completion before first slot. */
+    jumpstart: {
+        minNoticeHours: parseFloat(process.env.JUMPSTART_MIN_NOTICE_HOURS ?? '2'),
+    },
+
     googleCalendarOAuth: {
         successRedirectUrl:
             process.env.GOOGLE_OAUTH_SUCCESS_REDIRECT?.trim() ||
