@@ -41,6 +41,27 @@ function resolveDefaultSteps(totalSteps?: number, extras?: any[]): number {
     return extrasCount > 0 ? extrasCount : 1;
 }
 
+/** Align with progress assignment: parent + nested template steps when progress.totalSteps is unset. */
+function resolveRoadmapProgressTotalSteps(roadmap?: {
+    totalSteps?: number;
+    extras?: unknown[];
+    roadmaps?: { totalSteps?: number; extras?: unknown[] }[];
+} | null): number {
+    if (!roadmap) return 0;
+    if (typeof roadmap.totalSteps === 'number' && roadmap.totalSteps > 0) {
+        return roadmap.totalSteps;
+    }
+    const ownSteps = roadmap.extras?.length ?? 0;
+    const nestedSteps = (roadmap.roadmaps ?? []).reduce((sum, nested) => {
+        if (typeof nested?.totalSteps === 'number' && nested.totalSteps > 0) {
+            return sum + nested.totalSteps;
+        }
+        const nestedExtras = nested?.extras?.length ?? 0;
+        return sum + (nestedExtras > 0 ? nestedExtras : 1);
+    }, 0);
+    return ownSteps + nestedSteps > 0 ? ownSteps + nestedSteps : 1;
+}
+
 const MENTORING_JOURNEY_SESSION_MAX = SESSION_NOTES.length;
 
 const JUMPSTART_MENTOR_NO_AVAILABILITY_MSG =
@@ -1875,7 +1896,7 @@ export class RoadMapsService {
     ): Promise<void> {
         const roadmapRow = await this.roadMapModel
             .findById(roadMapObjectId)
-            .select('type')
+            .select('type totalSteps extras roadmaps')
             .lean()
             .exec();
 
@@ -1896,8 +1917,15 @@ export class RoadMapsService {
                 r.roadMapId.toString() === roadMapObjectId.toString(),
         );
 
-        const totalSteps = typeof entry?.totalSteps === 'number' ? entry.totalSteps : 0;
-        if (!entry || totalSteps <= 0) {
+        if (!entry) {
+            return;
+        }
+
+        let totalSteps = typeof entry.totalSteps === 'number' ? entry.totalSteps : 0;
+        if (totalSteps <= 0) {
+            totalSteps = resolveRoadmapProgressTotalSteps(roadmapRow);
+        }
+        if (totalSteps <= 0) {
             return;
         }
 
@@ -1937,7 +1965,7 @@ export class RoadMapsService {
     ): Promise<void> {
         const roadmapRow = await this.roadMapModel
             .findById(roadMapObjectId)
-            .select('type')
+            .select('type totalSteps extras roadmaps')
             .lean()
             .exec();
 
@@ -1963,13 +1991,20 @@ export class RoadMapsService {
                 r.roadMapId.toString() === roadMapObjectId.toString(),
         );
 
-        const totalSteps = typeof entry?.totalSteps === 'number' ? entry.totalSteps : 0;
-
-        if (!entry || totalSteps <= 0) {
+        if (!entry) {
             return;
         }
 
-        if (entry.completedSteps < entry.totalSteps) {
+        let totalSteps = typeof entry.totalSteps === 'number' ? entry.totalSteps : 0;
+        if (totalSteps <= 0) {
+            totalSteps = resolveRoadmapProgressTotalSteps(roadmapRow);
+        }
+
+        if (totalSteps <= 0) {
+            return;
+        }
+
+        if ((entry.completedSteps ?? 0) < totalSteps) {
             return;
         }
 
