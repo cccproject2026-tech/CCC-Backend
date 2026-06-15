@@ -16,6 +16,11 @@ import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
 import { RoadMapsService } from './roadmaps.service';
 import { BaseResponse } from 'src/shared/interfaces/base-response.interface';
 import { RoadMapResponseDto, CreateRoadMapDto, UpdateRoadMapDto, UpdateNestedRoadMapItemDto, NestedRoadMapItemDto, ReorderRoadmapsDto } from './dto/roadmap.dto';
+import {
+    RemoveRoadmapAssignmentsDto,
+    RoadmapAssignmentResponseDto,
+    RemoveRoadmapAssignmentsResponseDto,
+} from './dto/roadmap-assignments.dto';
 import { AddCommentDto, CommentsThreadResponseDto } from './dto/comments.dto';
 import {
     CreateQueryDto,
@@ -137,6 +142,35 @@ export class RoadMapsController {
             success: true,
             message: 'Nested roadmap item fetched successfully',
             data: item,
+        };
+    }
+
+    @Get(':roadMapId/assignments')
+    async getRoadmapAssignments(
+        @Param('roadMapId', ParseMongoIdPipe) roadMapId: string,
+    ): Promise<BaseResponse<RoadmapAssignmentResponseDto[]>> {
+        const assignments = await this.roadMapsService.getRoadmapAssignments(roadMapId);
+        return {
+            success: true,
+            message: assignments.length > 0
+                ? 'Roadmap assignments fetched successfully'
+                : 'No users are assigned to this roadmap',
+            data: assignments,
+        };
+    }
+
+    @Delete(':roadMapId/assignments')
+    async removeRoadmapAssignments(
+        @Param('roadMapId', ParseMongoIdPipe) roadMapId: string,
+        @Body() dto: RemoveRoadmapAssignmentsDto,
+    ): Promise<BaseResponse<RemoveRoadmapAssignmentsResponseDto>> {
+        const result = await this.roadMapsService.removeRoadmapAssignments(roadMapId, dto.userIds);
+        return {
+            success: true,
+            message: result.removedUserIds.length > 0
+                ? `Removed roadmap assignment for ${result.removedUserIds.length} user(s)`
+                : 'No matching roadmap assignments found for the selected users',
+            data: result,
         };
     }
 

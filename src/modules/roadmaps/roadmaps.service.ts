@@ -5,6 +5,10 @@ import { Model, Types } from 'mongoose';
 import { RoadMap, RoadMapDocument } from './schemas/roadmap.schema';
 import { CommentItem, Comments, CommentsDocument } from './schemas/comments.schema';
 import { CreateRoadMapDto, RoadMapResponseDto, UpdateRoadMapDto, UpdateNestedRoadMapItemDto, NestedRoadMapItemDto } from './dto/roadmap.dto';
+import {
+    RoadmapAssignmentResponseDto,
+    RemoveRoadmapAssignmentsResponseDto,
+} from './dto/roadmap-assignments.dto';
 import { toRoadMapResponseDto } from './utils/roadmaps.mapper';
 import { Queries, QueriesDocument, QueryItem } from './schemas/queries.schema';
 import { AddCommentDto, CommentsThreadResponseDto } from './dto/comments.dto';
@@ -561,6 +565,127 @@ export class RoadMapsService {
         }
 
         return { _id: id };
+    }
+
+    async getRoadmapAssignments(roadMapId: string): Promise<RoadmapAssignmentResponseDto[]> {
+        const roadMapObjectId = new Types.ObjectId(roadMapId);
+
+        const roadmap = await this.roadMapModel.findById(roadMapObjectId).select('_id').lean().exec();
+        if (!roadmap) {
+            throw new NotFoundException(`RoadMap with ID "${roadMapId}" not found`);
+        }
+
+        const progressDocs = await this.progressModel
+            .find({ 'roadmaps.roadMapId': roadMapObjectId })
+            .select('userId roadmaps')
+            .lean()
+            .exec();
+
+        if (progressDocs.length === 0) {
+            return [];
+        }
+
+        const userIds = progressDocs.map((p) => p.userId);
+        const users = await this.userModel
+            .find({ _id: { $in: userIds } })
+            .select('firstName lastName email profilePicture status')
+            .lean()
+            .exec();
+
+        const userMap = new Map(users.map((u) => [u._id.toString(), u]));
+        const assignments: RoadmapAssignmentResponseDto[] = [];
+
+        for (const progress of progressDocs) {
+            const roadmapEntry = progress.roadmaps.find(
+                (r) => r.roadMapId.toString() === roadMapId,
+            );
+            if (!roadmapEntry) {
+                continue;
+            }
+
+            const userIdStr = progress.userId.toString();
+            const user = userMap.get(userIdStr);
+            if (!user) {
+                continue;
+            }
+
+            assignments.push({
+                userId: userIdStr,
+                pastorName: `${user.firstName} ${user.lastName}`.trim(),
+                email: user.email,
+                profilePicture: user.profilePicture ?? '',
+                status: roadmapEntry.status,
+                assignedAt: roadmapEntry.assignedAt
+                    ? new Date(roadmapEntry.assignedAt).toISOString()
+                    : new Date(0).toISOString(),
+            });
+        }
+
+        return assignments.sort(
+            (a, b) => new Date(b.assignedAt).getTime() - new Date(a.assignedAt).getTime(),
+        );
+    }
+
+    async removeRoadmapAssignments(
+        roadMapId: string,
+        userIds: string[],
+    ): Promise<RemoveRoadmapAssignmentsResponseDto> {
+        const roadMapObjectId = new Types.ObjectId(roadMapId);
+
+        const roadmap = await this.roadMapModel.findById(roadMapObjectId).select('_id').lean().exec();
+        if (!roadmap) {
+            throw new NotFoundException(`RoadMap with ID "${roadMapId}" not found`);
+        }
+
+        const userObjectIds = userIds.map((id) => new Types.ObjectId(id));
+
+        const progressDocs = await this.progressModel
+            .find({
+                userId: { $in: userObjectIds },
+                'roadmaps.roadMapId': roadMapObjectId,
+            })
+            .select('userId')
+            .lean()
+            .exec();
+
+        if (progressDocs.length === 0) {
+            return { removedUserIds: [] };
+        }
+
+        const assignedUserIds = progressDocs.map((p) => p.userId.toString());
+        const assignedUserObjectIds = assignedUserIds.map((id) => new Types.ObjectId(id));
+
+        await Promise.all([
+            this.extrasModel.deleteMany({
+                roadMapId: roadMapObjectId,
+                userId: { $in: assignedUserObjectIds },
+            }),
+            this.commentsModel.deleteMany({
+                roadMapId: roadMapObjectId,
+                userId: { $in: assignedUserObjectIds },
+            }),
+            this.queriesModel.deleteMany({
+                roadMapId: roadMapObjectId,
+                userId: { $in: assignedUserObjectIds },
+            }),
+        ]);
+
+        await Promise.all(
+            assignedUserIds.map((userId) => {
+                const userObjectId = new Types.ObjectId(userId);
+                return this.progressModel
+                    .findOneAndUpdate(
+                        {
+                            $or: [{ userId: userObjectId }, { userId }],
+                        },
+                        { $pull: { roadmaps: { roadMapId: roadMapObjectId } } },
+                        { new: true },
+                    )
+                    .exec();
+            }),
+        );
+
+        return { removedUserIds: assignedUserIds };
     }
 
     // async getRoadMap(id: string): Promise<{ roadmap: RoadMapResponseDto; comments: CommentsResponseDto }> {
