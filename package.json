@@ -19,7 +19,8 @@
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
     "seed:mentor-availability": "ts-node -r tsconfig-paths/register src/scripts/seed-default-mentor-availability.ts",
-    "migrate:appointment-session-modes": "ts-node -r tsconfig-paths/register src/scripts/migrate-appointment-session-modes.ts"
+    "migrate:appointment-session-modes": "ts-node -r tsconfig-paths/register src/scripts/migrate-appointment-session-modes.ts",
+    "migrate:assessment-progress": "ts-node -r tsconfig-paths/register src/scripts/backfill-assessment-progress.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.930.0",

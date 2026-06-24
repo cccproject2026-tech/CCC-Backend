@@ -26,6 +26,7 @@ import { MailerService } from '../../common/utils/mail.util';
 import { ROLES } from '../../common/constants/roles.constants';
 import { assessmentSectionRecommendationNotification } from '../../common/utils/notification-copy.util';
 import { RoadmapAssessmentCompletionService } from '../roadmaps/roadmap-assessment-completion.service';
+import { countCompletedAnswerSections } from '../progress/utils/assessment-progress.util';
 
 @Injectable()
 export class AssessmentService {
@@ -146,8 +147,29 @@ export class AssessmentService {
       throw new BadRequestException('Invalid assessment ID(s)');
     }
 
+    const objectIds = ids.map((id) => new Types.ObjectId(id));
+
+    const affectedProgress = await this.progressModel
+      .find({ 'assessments.assessmentId': { $in: objectIds } })
+      .exec();
+
+    for (const progressDoc of affectedProgress) {
+      const before = progressDoc.assessments.length;
+      progressDoc.assessments = progressDoc.assessments.filter(
+        (entry) => !objectIds.some((id) => id.equals(entry.assessmentId)),
+      );
+      if (progressDoc.assessments.length !== before) {
+        progressDoc.markModified('assessments');
+        await progressDoc.save();
+      }
+    }
+
+    await this.assessmentAssignedModel.deleteMany({
+      assessmentId: { $in: objectIds },
+    });
+
     return this.assessmentModel.deleteMany({
-      _id: { $in: ids },
+      _id: { $in: objectIds },
     });
   }
 
@@ -603,36 +625,52 @@ export class AssessmentService {
     }
 
     if (result && result.sections && result.sections.length > 0) {
-      const completedSectionsCount = result.sections.length;
-      const assessmentIdObj = new Types.ObjectId(assessmentId);
-      const userIdObj = new Types.ObjectId(userId);
-      const userIdString = userIdObj.toString();
-
-      const progressUpdateResult = await this.progressModel.findOneAndUpdate(
-        {
-          $or: [
-            { userId: userIdObj },
-            { userId: userIdString }
-          ],
-          'assessments.assessmentId': assessmentIdObj,
-        },
-        {
-          $set: {
-            'assessments.$.completedSections': completedSectionsCount,
-          },
-        },
-        { new: true }
-      ).exec();
-
-      if (!progressUpdateResult) {
-        console.warn(
-          `Progress not found for userId: ${userId}, assessmentId: ${assessmentId}. ` +
-          `Assessment should be assigned via assignAssessment() before saving answers.`
-        );
-      }
+      await this.syncAssessmentProgressCompletedSections(
+        userId,
+        assessmentId,
+        result.sections,
+      );
     }
 
     return result;
+  }
+
+  private async syncAssessmentProgressCompletedSections(
+    userId: string,
+    assessmentId: string,
+    sections?: { layers?: unknown[] }[],
+  ): Promise<void> {
+    const completedSectionsCount = countCompletedAnswerSections(sections);
+    if (completedSectionsCount <= 0) {
+      return;
+    }
+
+    const assessmentIdObj = new Types.ObjectId(assessmentId);
+    const userIdObj = new Types.ObjectId(userId);
+    const userIdString = userIdObj.toString();
+
+    const progressUpdateResult = await this.progressModel.findOneAndUpdate(
+      {
+        $or: [
+          { userId: userIdObj },
+          { userId: userIdString },
+        ],
+        'assessments.assessmentId': assessmentIdObj,
+      },
+      {
+        $set: {
+          'assessments.$.completedSections': completedSectionsCount,
+        },
+      },
+      { new: true },
+    ).exec();
+
+    if (!progressUpdateResult) {
+      this.logger.warn(
+        `Progress not found for userId: ${userId}, assessmentId: ${assessmentId}. ` +
+        `Assessment should be assigned via assignAssessment() before saving answers.`,
+      );
+    }
   }
 
   // Get all saved answers for a user
@@ -647,7 +685,10 @@ export class AssessmentService {
     const result = await this.userAnswerModel
       .findOne({
         assessmentId: new Types.ObjectId(assessmentId),
-        userId: new Types.ObjectId(userId),
+        $or: [
+          { userId: new Types.ObjectId(userId) },
+          { userId },
+        ],
       })
       .lean()
       .exec();
@@ -837,21 +878,11 @@ export class AssessmentService {
       })
       .lean();
 
-    // progress update (your existing logic is fine)
-    const completedSectionsCount = updated?.sections?.length || 0;
-    const userIdString = userObjId.toString();
-
-    await this.progressModel.findOneAndUpdate(
-      {
-        $or: [{ userId: userObjId }, { userId: userIdString }],
-        'assessments.assessmentId': assessmentObjId,
-      },
-      {
-        $set: {
-          'assessments.$.completedSections': completedSectionsCount,
-        },
-      },
-      { new: true },
+    // progress update
+    await this.syncAssessmentProgressCompletedSections(
+      userId,
+      assessmentId,
+      updated?.sections,
     );
 
     try {

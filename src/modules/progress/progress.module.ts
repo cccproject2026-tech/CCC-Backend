@@ -6,6 +6,7 @@ import { ProgressController } from './progress.controller';
 import { RoadMap, RoadMapSchema } from '../roadmaps/schemas/roadmap.schema';
 import { Assessment, AssessmentSchema } from '../assessment/schemas/assessment.schema';
 import { User, UserSchema } from '../users/schemas/user.schema';
+import { UserAnswer, UserAnswerSchema } from '../assessment/schemas/answer.schema';
 import { AssessmentAssigned, AssessmentAssignedSchema } from '../assessment/schemas/assessment_assigned';
 import { MailerService } from 'src/common/utils/mail.util';
 import { ConfigModule } from '@nestjs/config';
@@ -19,6 +20,7 @@ import { ConfigModule } from '@nestjs/config';
             { name: Assessment.name, schema: AssessmentSchema },
             { name: AssessmentAssigned.name, schema: AssessmentAssignedSchema },
             { name: User.name, schema: UserSchema },
+            { name: UserAnswer.name, schema: UserAnswerSchema },
         ]),
     ],
     controllers: [ProgressController],

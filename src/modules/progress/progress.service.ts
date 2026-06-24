@@ -25,8 +25,13 @@ import {
 } from './dto/progress.dto';
 import { ASSESSMENT_ASSIGNMENT_STATUSES, PROGRESS_STATUSES } from '../../common/constants/status.constants';
 import { AssessmentAssigned, AssessmentAssignedDocument } from '../assessment/schemas/assessment_assigned';
+import { UserAnswer, UserAnswerDocument } from '../assessment/schemas/answer.schema';
 import { MailerService } from '../../common/utils/mail.util';
 import { ROLES } from '../../common/constants/roles.constants';
+import {
+    countCompletedAnswerSections,
+} from './utils/assessment-progress.util';
+import { reconcileProgressAssessments } from './utils/reconcile-progress-assessments';
 
 function resolveAssignedRoadmapSteps(totalSteps?: number, extras?: any[], nestedRoadmaps?: any[]): number {
     if (typeof totalSteps === 'number' && totalSteps > 0) {
@@ -50,6 +55,7 @@ export class ProgressService {
         @InjectModel(Assessment.name) private assessmentModel: Model<AssessmentDocument>,
         @InjectModel(User.name) private userModel: Model<UserDocument>,
         @InjectModel(AssessmentAssigned.name) private assessmentAssignedModel: Model<AssessmentAssignedDocument>,
+        @InjectModel(UserAnswer.name) private userAnswerModel: Model<UserAnswerDocument>,
         private readonly mailer: MailerService,
     ) { }
 
@@ -81,7 +87,148 @@ export class ProgressService {
         if (!progress) {
             return null;
         }
+
+        await this.reconcileAndPersistAssessments(progress);
         return toProgressResponseDto(progress);
+    }
+
+    /**
+     * Removes orphaned assessment rows, syncs section counts from templates/answers,
+     * and recalculates overall progress fields.
+     */
+    async reconcileAndPersistAssessments(
+        progress: ProgressDocument,
+    ): Promise<{
+        changed: boolean;
+        removedOrphanIds: string[];
+        updatedAssessmentIds: string[];
+    }> {
+        if (!progress.assessments?.length) {
+            return { changed: false, removedOrphanIds: [], updatedAssessmentIds: [] };
+        }
+
+        const assessmentIds = [
+            ...new Set(progress.assessments.map((a) => a.assessmentId.toString())),
+        ].map((id) => new Types.ObjectId(id));
+
+        const [existingAssessments, answerDocs] = await Promise.all([
+            this.assessmentModel
+                .find({ _id: { $in: assessmentIds } }, { _id: 1, sections: 1 })
+                .lean()
+                .exec(),
+            this.userAnswerModel
+                .find(
+                    {
+                        $or: [
+                            { userId: progress.userId },
+                            { userId: progress.userId.toString() },
+                        ],
+                        assessmentId: { $in: assessmentIds },
+                    },
+                    { assessmentId: 1, sections: 1 },
+                )
+                .lean()
+                .exec(),
+        ]);
+
+        const existingAssessmentIds = new Set(
+            existingAssessments.map((a) => a._id.toString()),
+        );
+        const templateSectionCountByAssessmentId = new Map(
+            existingAssessments.map((a) => [a._id.toString(), a.sections?.length ?? 0]),
+        );
+        const answerSectionsByAssessmentId = new Map(
+            answerDocs.map((doc) => [doc.assessmentId.toString(), doc.sections ?? []]),
+        );
+
+        const result = reconcileProgressAssessments({
+            assessments: progress.assessments,
+            existingAssessmentIds,
+            templateSectionCountByAssessmentId,
+            answerSectionsByAssessmentId,
+        });
+
+        if (!result.changed) {
+            return {
+                changed: false,
+                removedOrphanIds: [],
+                updatedAssessmentIds: [],
+            };
+        }
+
+        progress.assessments = result.assessments;
+        progress.markModified('assessments');
+        await progress.save();
+
+        return {
+            changed: true,
+            removedOrphanIds: result.removedOrphanIds,
+            updatedAssessmentIds: result.updatedAssessmentIds,
+        };
+    }
+
+    async reconcileAllProgressDocuments(): Promise<{
+        scanned: number;
+        updated: number;
+        orphansRemoved: number;
+        assessmentsSynced: number;
+    }> {
+        const docs = await this.progressModel.find().exec();
+        let updated = 0;
+        let orphansRemoved = 0;
+        let assessmentsSynced = 0;
+
+        for (const doc of docs) {
+            const beforeCount = doc.assessments?.length ?? 0;
+            const outcome = await this.reconcileAndPersistAssessments(doc);
+            if (!outcome.changed) {
+                continue;
+            }
+
+            updated++;
+            orphansRemoved += outcome.removedOrphanIds.length;
+            assessmentsSynced += outcome.updatedAssessmentIds.length;
+
+            if (doc.assessments.length < beforeCount) {
+                continue;
+            }
+        }
+
+        return {
+            scanned: docs.length,
+            updated,
+            orphansRemoved,
+            assessmentsSynced,
+        };
+    }
+
+    async removeAssessmentsFromAllProgress(
+        assessmentIds: Types.ObjectId[],
+    ): Promise<number> {
+        if (!assessmentIds.length) {
+            return 0;
+        }
+
+        const affected = await this.progressModel
+            .find({ 'assessments.assessmentId': { $in: assessmentIds } })
+            .exec();
+
+        let updated = 0;
+        for (const doc of affected) {
+            const before = doc.assessments.length;
+            doc.assessments = doc.assessments.filter(
+                (entry) =>
+                    !assessmentIds.some((id) => id.equals(entry.assessmentId)),
+            );
+            if (doc.assessments.length === before) {
+                continue;
+            }
+            doc.markModified('assessments');
+            await doc.save();
+            updated++;
+        }
+
+        return updated;
     }
 
     async findByUserId(userId: Types.ObjectId): Promise<ProgressResponseDto | null> {
@@ -372,14 +519,37 @@ export class ProgressService {
                     continue;
                 }
 
+                const answerDocs = await this.userAnswerModel
+                    .find(
+                        {
+                            $or: [
+                                { userId: new Types.ObjectId(userId) },
+                                { userId: userId.toString() },
+                            ],
+                            assessmentId: { $in: newAssessmentIds },
+                        },
+                        { assessmentId: 1, sections: 1 },
+                    )
+                    .lean()
+                    .exec();
+                const completedSectionsByAssessmentId = new Map(
+                    answerDocs.map((doc) => [
+                        doc.assessmentId.toString(),
+                        countCompletedAnswerSections(doc.sections),
+                    ]),
+                );
+
                 // Create entries for new assessments
                 const newAssessmentEntries = newAssessmentIds.map(assessmentId => {
                     const assessmentData = assessmentDataMap.get(assessmentId.toString());
+                    const totalSections = assessmentData?.totalSections || 0;
+                    const completedSections =
+                        completedSectionsByAssessmentId.get(assessmentId.toString()) ?? 0;
 
                     return {
                         assessmentId,
-                        completedSections: 0,
-                        totalSections: assessmentData?.totalSections || 0,
+                        completedSections,
+                        totalSections,
                         progressPercentage: 0,
                         status: PROGRESS_STATUSES.NOT_STARTED,
                     };
