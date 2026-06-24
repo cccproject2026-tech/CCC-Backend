@@ -9,8 +9,14 @@ import {
     AddFinalCommentDto,
     UpdateFinalCommentDto,
     DeleteFinalCommentDto,
+    BulkProgressRequestDto,
 } from './dto/progress.dto';
-import { ProgressResponseDto, UserOverallProgressDto, DirectorOverviewDto } from './utils/progress.mapper';
+import {
+    ProgressResponseDto,
+    UserOverallProgressDto,
+    DirectorOverviewDto,
+    BulkUserProgressMap,
+} from './utils/progress.mapper';
 import { BaseResponse } from '../../shared/interfaces/base-response.interface';
 import { ParseMongoIdPipe } from 'src/common/pipes/parse-mongo-id.pipe';
 
@@ -61,6 +67,18 @@ export class ProgressController {
             success: true,
             message: progress ? 'User progress fetched successfully.' : 'No progress record found for this user.',
             data: progress,
+        };
+    }
+
+    @Post('bulk')
+    async getBulkProgress(
+        @Body() dto: BulkProgressRequestDto,
+    ): Promise<BaseResponse<BulkUserProgressMap>> {
+        const data = await this.progressService.getBulkUserProgress(dto.userIds);
+        return {
+            success: true,
+            message: `Progress fetched for ${Object.keys(data).length} user(s).`,
+            data,
         };
     }
 

@@ -5,7 +5,15 @@ import { Progress, ProgressDocument } from './schemas/progress.schema';
 import { RoadMap, RoadMapDocument } from '../roadmaps/schemas/roadmap.schema';
 import { Assessment, AssessmentDocument } from '../assessment/schemas/assessment.schema';
 import { User, UserDocument } from '../users/schemas/user.schema';
-import { ProgressResponseDto, toProgressResponseDto, UserOverallProgressDto, DirectorOverviewDto, MonthlyCompletionDto } from './utils/progress.mapper';
+import {
+    ProgressResponseDto,
+    toProgressResponseDto,
+    toBulkUserProgressDto,
+    BulkUserProgressMap,
+    UserOverallProgressDto,
+    DirectorOverviewDto,
+    MonthlyCompletionDto,
+} from './utils/progress.mapper';
 import {
     AssignRoadmapDto,
     AssignAssessmentDto,
@@ -59,21 +67,91 @@ export class ProgressService {
         return r === ROLES.MENTOR || r === ROLES.FIELD_MENTOR;
     }
 
-    async findByUserId(userId: Types.ObjectId): Promise<ProgressResponseDto | null> {
+    async getUserProgress(userId: Types.ObjectId): Promise<ProgressResponseDto | null> {
         const userObjectId: Types.ObjectId = userId;
         const userIdString: string = userId.toString();
 
         const progress = await this.progressModel.findOne({
             $or: [
                 { userId: userObjectId },
-                { userId: userIdString }
-            ]
+                { userId: userIdString },
+            ],
         }).exec();
 
         if (!progress) {
             return null;
         }
         return toProgressResponseDto(progress);
+    }
+
+    async findByUserId(userId: Types.ObjectId): Promise<ProgressResponseDto | null> {
+        return this.getUserProgress(userId);
+    }
+
+    async getBulkUserProgress(userIds: Types.ObjectId[]): Promise<BulkUserProgressMap> {
+        const uniqueUserIds = [...new Map(userIds.map((id) => [id.toString(), id])).values()];
+        const userIdStrings = uniqueUserIds.map((id) => id.toString());
+
+        const progressDocs = await this.progressModel.find({
+            $or: [
+                { userId: { $in: uniqueUserIds } },
+                { userId: { $in: userIdStrings } },
+            ],
+        }).exec();
+
+        const progressByUserId = new Map<string, ProgressDocument>();
+        for (const doc of progressDocs) {
+            progressByUserId.set(doc.userId.toString(), doc);
+        }
+
+        const results: BulkUserProgressMap = {};
+
+        const settled = await Promise.allSettled(
+            uniqueUserIds.map(async (userId) => {
+                const userIdStr = userId.toString();
+                try {
+                    const doc = progressByUserId.get(userIdStr);
+                    const progress = doc ? toProgressResponseDto(doc) : null;
+                    return {
+                        userIdStr,
+                        item: toBulkUserProgressDto(progress, userIdStr),
+                    };
+                } catch (error) {
+                    return {
+                        userIdStr,
+                        item: {
+                            userId: userIdStr,
+                            roadmapProgressPercent: 0,
+                            roadmaps: [],
+                            failed: true,
+                            error: error instanceof Error ? error.message : 'Failed to fetch progress',
+                        },
+                    };
+                }
+            }),
+        );
+
+        for (const outcome of settled) {
+            if (outcome.status === 'fulfilled') {
+                results[outcome.value.userIdStr] = outcome.value.item;
+                continue;
+            }
+
+            const reason = outcome.reason;
+            const message = reason instanceof Error ? reason.message : 'Failed to fetch progress';
+            const fallbackUserId = typeof reason?.userId === 'string' ? reason.userId : undefined;
+            if (fallbackUserId) {
+                results[fallbackUserId] = {
+                    userId: fallbackUserId,
+                    roadmapProgressPercent: 0,
+                    roadmaps: [],
+                    failed: true,
+                    error: message,
+                };
+            }
+        }
+
+        return results;
     }
 
     async assignRoadmap(dto: AssignRoadmapDto): Promise<ProgressResponseDto[]> {

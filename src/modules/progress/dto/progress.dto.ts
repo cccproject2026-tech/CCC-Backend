@@ -1,4 +1,4 @@
-import { IsMongoId, IsNumber, IsNotEmpty, Min, IsArray, ArrayMinSize, IsString, MaxLength, IsOptional, IsDateString } from 'class-validator';
+import { IsMongoId, IsNumber, IsNotEmpty, Min, IsArray, ArrayMinSize, ArrayMaxSize, IsString, MaxLength, IsOptional, IsDateString } from 'class-validator';
 import { PartialType, OmitType } from '@nestjs/mapped-types';
 import { Types } from 'mongoose';
 
@@ -101,4 +101,14 @@ export class DeleteFinalCommentDto {
     @IsMongoId()
     @IsNotEmpty()
     commentId: Types.ObjectId;
+}
+
+export const BULK_PROGRESS_MAX_USER_IDS = 100;
+
+export class BulkProgressRequestDto {
+    @IsArray()
+    @ArrayMinSize(1, { message: 'userIds must contain at least one user ID' })
+    @ArrayMaxSize(BULK_PROGRESS_MAX_USER_IDS, { message: `userIds cannot exceed ${BULK_PROGRESS_MAX_USER_IDS} entries` })
+    @IsMongoId({ each: true })
+    userIds: Types.ObjectId[];
 }

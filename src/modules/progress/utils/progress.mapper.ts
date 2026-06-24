@@ -57,6 +57,35 @@ export class ProgressResponseDto {
     // updatedAt: Date;
 }
 
+export class BulkUserProgressDto {
+    userId: string;
+    roadmapProgressPercent: number;
+    roadmaps?: ProgressRoadmapDto[];
+    failed?: boolean;
+    error?: string;
+}
+
+export type BulkUserProgressMap = Record<string, BulkUserProgressDto>;
+
+export function toBulkUserProgressDto(
+    progress: ProgressResponseDto | null,
+    userId: string,
+): BulkUserProgressDto {
+    if (!progress) {
+        return {
+            userId,
+            roadmapProgressPercent: 0,
+            roadmaps: [],
+        };
+    }
+
+    return {
+        userId,
+        roadmapProgressPercent: progress.overallRoadmapProgress,
+        roadmaps: progress.roadmaps,
+    };
+}
+
 export class UserOverallProgressDto {
     userId: string;
     firstName: string;
