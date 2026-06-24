@@ -755,11 +755,16 @@ export class UsersService {
             'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // .docx
             'application/vnd.ms-excel', // .xls
             'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
+            'video/mp4',
+            'video/mpeg',
+            'video/quicktime',
+            'video/webm',
+            'video/3gpp',
         ];
 
         if (!allowedMimeTypes.includes(file.mimetype)) {
             throw new BadRequestException(
-                'Invalid file type. Only PDF, images, Word, and Excel documents are allowed'
+                'Invalid file type. Only PDF, images, Word, Excel, and video files are allowed'
             );
         }
 
