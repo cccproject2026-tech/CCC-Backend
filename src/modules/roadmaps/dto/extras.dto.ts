@@ -49,6 +49,10 @@ export class ExtrasDocumentDto {
     @IsString()
     name?: string;
 
+    @IsOptional()
+    @IsNumber()
+    historyVersion?: number;
+
     @IsArray()
     @Type(() => FileDataDto)
     files: FileDataDto[];

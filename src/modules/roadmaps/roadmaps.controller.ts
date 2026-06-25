@@ -35,6 +35,7 @@ import {
     ExtrasDocumentDto,
     RoadmapSubmissionActivityDto,
 } from './dto/extras.dto';
+import { TaskSubmissionDto } from './dto/submission.dto';
 import { ParseMongoIdPipe } from 'src/common/pipes/parse-mongo-id.pipe';
 // import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 // import { RolesGuard } from '../../common/guards/roles.guard';
@@ -118,6 +119,30 @@ export class RoadMapsController {
                 ? 'Roadmap submission activity fetched successfully'
                 : 'No roadmap submission activity found for this date range',
             data,
+        };
+    }
+
+    @Get('submissions/:submissionId')
+    async getSubmissionById(
+        @Param('submissionId') submissionId: string,
+    ): Promise<BaseResponse<TaskSubmissionDto>> {
+        const submission = await this.roadMapsService.getTaskSubmissionById(submissionId);
+        return {
+            success: true,
+            message: 'Submission fetched successfully',
+            data: submission,
+        };
+    }
+
+    @Get('submissions/:submissionId/documents')
+    async getSubmissionDocuments(
+        @Param('submissionId') submissionId: string,
+    ): Promise<BaseResponse<ExtrasDocumentDto[]>> {
+        const documents = await this.roadMapsService.getTaskSubmissionDocuments(submissionId);
+        return {
+            success: true,
+            message: 'Submission documents fetched successfully',
+            data: documents,
         };
     }
 
@@ -455,6 +480,44 @@ export class RoadMapsController {
             success: true,
             message: extras ? 'Extras fetched successfully' : 'No extras found',
             data: extras,
+        };
+    }
+
+    @Get(':roadMapId/submissions/latest')
+    async getLatestSubmission(
+        @Param('roadMapId', ParseMongoIdPipe) roadMapId: string,
+        @Query('userId', ParseMongoIdPipe) userId: string,
+        @Query('nestedRoadMapItemId') nestedRoadMapItemId?: string,
+    ): Promise<BaseResponse<TaskSubmissionDto | null>> {
+        const submission = await this.roadMapsService.getLatestTaskSubmission(
+            roadMapId,
+            userId,
+            nestedRoadMapItemId,
+        );
+        return {
+            success: true,
+            message: submission ? 'Latest submission fetched successfully' : 'No submissions found',
+            data: submission,
+        };
+    }
+
+    @Get(':roadMapId/submissions')
+    async getTaskSubmissions(
+        @Param('roadMapId', ParseMongoIdPipe) roadMapId: string,
+        @Query('userId', ParseMongoIdPipe) userId: string,
+        @Query('nestedRoadMapItemId') nestedRoadMapItemId?: string,
+    ): Promise<BaseResponse<TaskSubmissionDto[]>> {
+        const submissions = await this.roadMapsService.getTaskSubmissions(
+            roadMapId,
+            userId,
+            nestedRoadMapItemId,
+        );
+        return {
+            success: true,
+            message: submissions.length > 0
+                ? 'Submissions fetched successfully'
+                : 'No submissions found',
+            data: submissions,
         };
     }
 

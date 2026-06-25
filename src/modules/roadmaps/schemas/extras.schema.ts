@@ -20,6 +20,8 @@ export class Extras {
             uploadBatchId: { type: String, required: true },
             uploadedAt: { type: Date, default: Date.now },
             name: { type: String },
+            /** Which extras save/resubmit version this batch belongs to (1-based). */
+            historyVersion: { type: Number, min: 1 },
             files: [{
                 fileName: { type: String, required: true },
                 fileUrl: { type: String, required: true },
@@ -33,6 +35,7 @@ export class Extras {
         uploadBatchId: string;
         uploadedAt: Date;
         name?: string;
+        historyVersion?: number;
         files: {
             fileName: string;
             fileUrl: string;

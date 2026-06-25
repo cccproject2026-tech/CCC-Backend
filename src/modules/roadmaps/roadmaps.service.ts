@@ -25,6 +25,12 @@ import {
     RoadmapSubmissionActivityDto,
 } from './dto/extras.dto';
 import { toExtrasResponseDto } from './utils/extras.mapper';
+import { TaskSubmissionDto } from './dto/submission.dto';
+import {
+    buildTaskSubmissionsFromExtras,
+    computeHistoryVersionCount,
+    parseSubmissionId,
+} from './utils/submission-history.util';
 import { Progress, ProgressDocument } from '../progress/schemas/progress.schema';
 import { toObjectId } from 'src/common/pipes/to-object-id.pipe';
 import { User, UserDocument } from '../users/schemas/user.schema';
@@ -1731,6 +1737,7 @@ export class RoadMapsService {
             uploadBatchId: uploadBatchId,
             uploadedAt: new Date(),
             name: name,
+            historyVersion: 1,
             files: uploadedFiles,
         };
 
@@ -1747,6 +1754,9 @@ export class RoadMapsService {
                 { nestedRoadMapItemId: { $exists: false } }
             ];
         }
+
+        const existingExtras = await this.extrasModel.findOne(query).select('extras').lean().exec();
+        documentBatch.historyVersion = computeHistoryVersionCount(existingExtras?.extras);
 
         await this.extrasModel.findOneAndUpdate(
             query,
@@ -1799,6 +1809,97 @@ export class RoadMapsService {
         }
 
         return extras.uploadedDocuments || [];
+    }
+
+    private buildExtrasQuery(
+        roadMapObjectId: Types.ObjectId,
+        userObjectId: Types.ObjectId,
+        nestedRoadMapItemObjectId?: Types.ObjectId | null,
+    ): Record<string, any> {
+        const query: any = {
+            roadMapId: roadMapObjectId,
+            userId: userObjectId,
+        };
+
+        if (nestedRoadMapItemObjectId) {
+            query.nestedRoadMapItemId = nestedRoadMapItemObjectId;
+        } else {
+            query.$or = [
+                { nestedRoadMapItemId: null },
+                { nestedRoadMapItemId: { $exists: false } },
+            ];
+        }
+
+        return query;
+    }
+
+    async getTaskSubmissions(
+        roadMapId: string,
+        userId: string,
+        nestedRoadMapItemId?: string,
+    ): Promise<TaskSubmissionDto[]> {
+        const roadMapObjectId = toObjectId(roadMapId);
+        const userObjectId = toObjectId(userId);
+        const nestedRoadMapItemObjectId = toObjectId(nestedRoadMapItemId);
+
+        if (!roadMapObjectId || !userObjectId) {
+            throw new BadRequestException('Invalid RoadMap ID or User ID provided');
+        }
+
+        const query = this.buildExtrasQuery(
+            roadMapObjectId,
+            userObjectId,
+            nestedRoadMapItemObjectId,
+        );
+
+        const extras = await this.extrasModel.findOne(query).lean().exec();
+        if (!extras) {
+            return [];
+        }
+
+        return buildTaskSubmissionsFromExtras(extras);
+    }
+
+    async getLatestTaskSubmission(
+        roadMapId: string,
+        userId: string,
+        nestedRoadMapItemId?: string,
+    ): Promise<TaskSubmissionDto | null> {
+        const submissions = await this.getTaskSubmissions(
+            roadMapId,
+            userId,
+            nestedRoadMapItemId,
+        );
+        if (submissions.length === 0) return null;
+        return submissions[submissions.length - 1];
+    }
+
+    async getTaskSubmissionById(submissionId: string): Promise<TaskSubmissionDto> {
+        const parsed = parseSubmissionId(submissionId);
+        if (!parsed) {
+            throw new BadRequestException('Invalid submission ID');
+        }
+
+        const extras = await this.extrasModel.findById(parsed.extrasId).lean().exec();
+        if (!extras) {
+            throw new NotFoundException('Submission not found');
+        }
+
+        const submissions = buildTaskSubmissionsFromExtras(extras);
+        const submission = submissions.find(
+            (item) => item.submissionNumber === parsed.versionNumber,
+        );
+
+        if (!submission) {
+            throw new NotFoundException('Submission not found');
+        }
+
+        return submission;
+    }
+
+    async getTaskSubmissionDocuments(submissionId: string): Promise<ExtrasDocumentDto[]> {
+        const submission = await this.getTaskSubmissionById(submissionId);
+        return submission.uploadedDocuments ?? [];
     }
 
     async deleteExtrasDocumentBatch(
@@ -1896,11 +1997,21 @@ export class RoadMapsService {
         );
 
         if (updatedBatch && updatedBatch.files.length === 0) {
+            const cleanupQuery: any = {
+                roadMapId: roadMapObjectId,
+                userId: userObjectId,
+            };
+            if (nestedRoadMapItemObjectId) {
+                cleanupQuery.nestedRoadMapItemId = nestedRoadMapItemObjectId;
+            } else {
+                cleanupQuery.$or = [
+                    { nestedRoadMapItemId: null },
+                    { nestedRoadMapItemId: { $exists: false } },
+                ];
+            }
+
             await this.extrasModel.findOneAndUpdate(
-                {
-                    roadMapId: roadMapObjectId,
-                    userId: userObjectId,
-                },
+                cleanupQuery,
                 { $pull: { uploadedDocuments: { uploadBatchId: uploadBatchId } } }
             ).exec();
         }
