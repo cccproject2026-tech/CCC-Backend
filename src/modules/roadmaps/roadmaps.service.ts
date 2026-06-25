@@ -1833,6 +1833,39 @@ export class RoadMapsService {
         return query;
     }
 
+    private assertDeletableDocumentBatch(extras: any, uploadBatchId: string): void {
+        const batches = extras.uploadedDocuments ?? [];
+        const batch = batches.find((doc: any) => doc.uploadBatchId === uploadBatchId);
+        if (!batch) {
+            throw new NotFoundException('Document batch not found');
+        }
+
+        const latestVersion = computeHistoryVersionCount(extras.extras);
+        if (batch.historyVersion != null) {
+            if (Number(batch.historyVersion) < latestVersion) {
+                throw new BadRequestException(
+                    'Cannot delete files from a previous submission. View them in submission history instead.',
+                );
+            }
+            return;
+        }
+
+        const norm = (value: unknown) => String(value ?? '').trim().toLowerCase();
+        const fieldName = norm(batch.name);
+        const fieldBatches = batches
+            .filter((doc: any) => norm(doc.name) === fieldName)
+            .sort(
+                (a: any, b: any) =>
+                    new Date(a.uploadedAt).getTime() - new Date(b.uploadedAt).getTime(),
+            );
+        const latestBatch = fieldBatches[fieldBatches.length - 1];
+        if (latestBatch?.uploadBatchId !== uploadBatchId) {
+            throw new BadRequestException(
+                'Cannot delete files from a previous submission. View them in submission history instead.',
+            );
+        }
+    }
+
     async getTaskSubmissions(
         roadMapId: string,
         userId: string,
@@ -1916,19 +1949,18 @@ export class RoadMapsService {
             throw new BadRequestException('Invalid RoadMap ID or User ID provided');
         }
 
-        const query: any = {
-            roadMapId: roadMapObjectId,
-            userId: userObjectId,
-        };
+        const query = this.buildExtrasQuery(
+            roadMapObjectId,
+            userObjectId,
+            nestedRoadMapItemObjectId,
+        );
 
-        if (nestedRoadMapItemObjectId) {
-            query.nestedRoadMapItemId = nestedRoadMapItemObjectId;
-        } else {
-            query.$or = [
-                { nestedRoadMapItemId: null },
-                { nestedRoadMapItemId: { $exists: false } }
-            ];
+        const extras = await this.extrasModel.findOne(query).lean().exec();
+        if (!extras) {
+            throw new NotFoundException('Extras not found');
         }
+
+        this.assertDeletableDocumentBatch(extras, uploadBatchId);
 
         const result = await this.extrasModel.findOneAndUpdate(
             query,
@@ -1972,6 +2004,13 @@ export class RoadMapsService {
                 { nestedRoadMapItemId: { $exists: false } }
             ];
         }
+
+        const extras = await this.extrasModel.findOne(query).lean().exec();
+        if (!extras) {
+            throw new NotFoundException('Document batch not found');
+        }
+
+        this.assertDeletableDocumentBatch(extras, uploadBatchId);
 
         // First, remove the specific file from the batch
         const result = await this.extrasModel.findOneAndUpdate(
