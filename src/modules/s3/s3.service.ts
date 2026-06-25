@@ -35,20 +35,33 @@ export class S3Service {
             Key: key,
             Body: body,
             ContentType: mimeType,
+            ACL: 'public-read',
         };
 
         try {
-            const command = new PutObjectCommand(params);
-            await this.s3Client.send(command);
+            try {
+                await this.s3Client.send(new PutObjectCommand(params));
+            } catch (error: any) {
+                const aclBlocked =
+                    error?.name === 'AccessControlListNotSupported' ||
+                    error?.Code === 'AccessControlListNotSupported' ||
+                    String(error?.message ?? '').includes('AccessControlListNotSupported');
+
+                if (!aclBlocked) {
+                    throw error;
+                }
+
+                this.logger.warn(
+                    `S3 ACL public-read not supported for bucket; uploading without ACL: ${key}`,
+                );
+                const { ACL, ...withoutAcl } = params;
+                await this.s3Client.send(new PutObjectCommand(withoutAcl));
+            }
 
             const region = this.configService.get<string>('aws.region');
-            // Return public URL (no signing required)
-            const fileUrl = `https://${this.bucketName}.s3.${region}.amazonaws.com/${key}`;
-
-            return fileUrl;
-
+            return `https://${this.bucketName}.s3.${region}.amazonaws.com/${key}`;
         } catch (error) {
-            this.logger.error(`S3 Upload failed for key: ${key}`, error.stack);
+            this.logger.error(`S3 Upload failed for key: ${key}`, (error as Error)?.stack);
             throw new Error('S3_UPLOAD_FAILED');
         }
     }

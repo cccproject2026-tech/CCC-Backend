@@ -1755,8 +1755,26 @@ export class RoadMapsService {
             ];
         }
 
-        const existingExtras = await this.extrasModel.findOne(query).select('extras').lean().exec();
-        documentBatch.historyVersion = computeHistoryVersionCount(existingExtras?.extras);
+        const existingExtras = await this.extrasModel.findOne(query).select('extras uploadedDocuments').lean().exec();
+        const versionFromExtras = computeHistoryVersionCount(existingExtras?.extras);
+        const normName = (value: unknown) => String(value ?? '').trim().toLowerCase();
+        const fieldBatches = (existingExtras?.uploadedDocuments ?? []).filter(
+            (batch: any) => normName(batch.name) === normName(name),
+        );
+        const maxStampedVersion = fieldBatches.reduce(
+            (max: number, batch: any) => Math.max(max, Number(batch.historyVersion) || 0),
+            0,
+        );
+        const legacyFieldCount = fieldBatches.filter(
+            (batch: any) => batch.historyVersion == null,
+        ).length;
+
+        documentBatch.historyVersion = Math.max(
+            versionFromExtras,
+            maxStampedVersion,
+            legacyFieldCount,
+            1,
+        );
 
         await this.extrasModel.findOneAndUpdate(
             query,

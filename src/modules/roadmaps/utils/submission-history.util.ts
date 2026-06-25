@@ -84,10 +84,14 @@ export function resolveUploadedDocumentsForVersion(
     const stamped = batches.filter(
         (batch) => Number((batch as any).historyVersion) === versionNumber,
     );
-    if (stamped.length > 0) return stamped;
+    if (stamped.length > 0) return sortBatchesChronologically(stamped);
+
+    const legacyBatches = batches.filter(
+        (batch) => (batch as any).historyVersion == null,
+    );
 
     const byField = new Map<string, ExtrasDocumentDto[]>();
-    for (const batch of batches) {
+    for (const batch of legacyBatches) {
         const key = normName(batch.name);
         if (!key) continue;
         if (!byField.has(key)) byField.set(key, []);
