@@ -20,6 +20,10 @@ export class AddNotificationDto {
   @IsString()
   @IsOptional()
   module?: string;
+
+  @IsString()
+  @IsOptional()
+  referenceId?: string;
 }
 
 export class GetNotificationDto {
@@ -47,6 +51,7 @@ export class NotificationItemResponseDto {
   name: string;
   details: string;
   module?: string;
+  referenceId?: string;
   read?: boolean;
   createdAt?: Date;
 }

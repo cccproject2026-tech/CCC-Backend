@@ -21,6 +21,7 @@ export function mapToResponse(doc: NotificationDocument | any): NotificationResp
                 name: n.name,
                 details: n.details,
                 module: n.module,
+                referenceId: n.referenceId,
                 read: n.read ?? false,
                 createdAt: n.createdAt,
             }))

@@ -301,7 +301,7 @@ export class HomeService {
   }
 
   async addNotification(dto: AddNotificationDto): Promise<NotificationResponseDto> {
-    const { userId, role, name, details, module } = dto;
+    const { userId, role, name, details, module, referenceId } = dto;
 
     if (!userId && !role) {
       throw new BadRequestException("Either userId or role must be provided");
@@ -311,6 +311,7 @@ export class HomeService {
       name,
       details,
       module,
+      referenceId,
       read: false,
     };
 
@@ -367,7 +368,7 @@ export class HomeService {
           fcmTokens,
           name,
           details,
-          { module: module ?? '' },
+          { module: module ?? '', referenceId: referenceId ?? '' },
         );
 
         const invalidTokens = result?.invalidTokens ?? [];
@@ -386,7 +387,7 @@ export class HomeService {
           expoTokens,
           name,
           details,
-          { module: module ?? '' },
+          { module: module ?? '', referenceId: referenceId ?? '' },
         );
 
         const invalidTokens = result?.invalidTokens ?? [];

@@ -1117,6 +1117,7 @@ export class AppointmentsService {
                 name: 'Appointment scheduled',
                 details: `Your mentorship session with ${mentorName} is on ${whenLabel}.${zoomInfo}`,
                 module: 'APPOINTMENT',
+                referenceId: result.id,
             });
 
             await this.notificationService.addNotification({
@@ -1124,6 +1125,7 @@ export class AppointmentsService {
                 name: 'New session booked',
                 details: `${userName} scheduled a mentorship session with you for ${whenLabel}.${zoomInfo}`,
                 module: 'APPOINTMENT',
+                referenceId: result.id,
             });
 
             await this.notificationService.addNotification({
@@ -1131,6 +1133,7 @@ export class AppointmentsService {
                 name: 'Appointment booked',
                 details: `${userName} booked a session with ${mentorName} (${whenLabel}).`,
                 module: 'APPOINTMENT',
+                referenceId: result.id,
             });
 
             // Send email notifications to pastor (user) and mentor if Zoom link exists
@@ -1616,6 +1619,7 @@ export class AppointmentsService {
                     name: 'Appointment rescheduled',
                     details: `Your session with ${mentorName} is now ${whenLabel}. Open CCC for your updated Zoom link and calendar.`,
                     module: 'APPOINTMENT',
+                    referenceId: id,
                 });
 
                 await this.notificationService.addNotification({
@@ -1623,6 +1627,7 @@ export class AppointmentsService {
                     name: 'Appointment rescheduled',
                     details: `${userName} moved your shared session to ${whenLabel}. Check CCC for the latest meeting link.`,
                     module: 'APPOINTMENT',
+                    referenceId: id,
                 });
 
                 await this.notificationService.addNotification({
@@ -1630,6 +1635,7 @@ export class AppointmentsService {
                     name: 'Appointment rescheduled',
                     details: `${userName} rescheduled their session with ${mentorName} to ${whenLabel}.`,
                     module: 'APPOINTMENT',
+                    referenceId: id,
                 });
 
                 // Send rescheduled emails to pastor and mentor if Zoom link present
@@ -2605,6 +2611,7 @@ export class AppointmentsService {
                 name: 'Appointment canceled',
                 details: `The session with ${mentorName} that was planned for ${whenLabel} has been canceled. ${reasonText}`.trim(),
                 module: 'APPOINTMENT',
+                referenceId: appointment._id.toString(),
             });
 
             await this.notificationService.addNotification({
@@ -2612,6 +2619,7 @@ export class AppointmentsService {
                 name: 'Appointment canceled',
                 details: `${userName}'s mentorship session (${whenLabel}) was canceled. ${reasonText}`.trim(),
                 module: 'APPOINTMENT',
+                referenceId: appointment._id.toString(),
             });
 
             await this.notificationService.addNotification({
@@ -2619,6 +2627,7 @@ export class AppointmentsService {
                 name: 'Appointment canceled',
                 details: `Canceled: ${userName} with ${mentorName} (${whenLabel}). ${reasonText}`.trim(),
                 module: 'APPOINTMENT',
+                referenceId: appointment._id.toString(),
             });
 
             // Send cancellation emails to pastor and mentor
@@ -2836,6 +2845,7 @@ export class AppointmentsService {
                 name: 'Session marked missed',
                 details: `The session with ${mentorName} planned for ${whenLabel} was recorded as missed. ${reasonText}`.trim(),
                 module: 'APPOINTMENT',
+                referenceId: appointment._id.toString(),
             });
 
             await this.notificationService.addNotification({
@@ -2843,6 +2853,7 @@ export class AppointmentsService {
                 name: 'Session marked missed',
                 details: `${userName}'s mentorship session (${whenLabel}) was recorded as missed. ${reasonText}`.trim(),
                 module: 'APPOINTMENT',
+                referenceId: appointment._id.toString(),
             });
 
             await this.notificationService.addNotification({
@@ -2850,6 +2861,7 @@ export class AppointmentsService {
                 name: 'Session marked missed',
                 details: `Missed: ${userName} with ${mentorName} (${whenLabel}). ${reasonText}`.trim(),
                 module: 'APPOINTMENT',
+                referenceId: appointment._id.toString(),
             });
         } catch (err) {
             this.logger.warn(`Failed to send missed-session notifications: ${err?.message ?? err}`);

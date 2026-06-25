@@ -12,6 +12,9 @@ export class NotificationItem {
   @Prop()
   module?: string;
 
+  @Prop()
+  referenceId?: string;
+
   @Prop({ default: false })
   read: boolean;
 
