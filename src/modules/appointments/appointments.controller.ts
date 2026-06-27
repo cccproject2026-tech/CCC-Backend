@@ -285,6 +285,34 @@ export class AppointmentsController {
         };
     }
 
+    @Get('available-slots')
+    async getAvailableSlots(
+        @Query('mentorId') mentorId: string,
+        @Query('date') date: string,
+        @Query('participantUserId') participantUserId?: string,
+        @Query('excludeAppointmentId') excludeAppointmentId?: string,
+    ): Promise<BaseResponse<any>> {
+        if (!mentorId?.trim()) {
+            throw new BadRequestException('mentorId query param is required');
+        }
+        if (!date?.trim()) {
+            throw new BadRequestException('date query param is required (YYYY-MM-DD)');
+        }
+
+        const data = await this.appointmentsService.getAvailableSlotsForDay({
+            mentorId: mentorId.trim(),
+            date: date.trim(),
+            participantUserId: participantUserId?.trim() || undefined,
+            excludeAppointmentId: excludeAppointmentId?.trim() || undefined,
+        });
+
+        return {
+            success: true,
+            message: 'Available slots fetched successfully.',
+            data,
+        };
+    }
+
     /**
      * REST shape `GET /appointments/:userId` — appointments where this user is mentee OR mentor/director mentor role.
      * Declared after static paths (`upcoming`, `user/`, `availability/`, etc.) so it only matches a single Mongo id segment.

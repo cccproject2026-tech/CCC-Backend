@@ -200,6 +200,51 @@ export function dateKeyUtcForInput(dateInput: string): string {
 /** IST is UTC+5:30 — matches manual booking and {@link AppointmentsService.buildIstSlotStartUtc}. */
 export const IST_OFFSET_MINUTES = 330;
 
+/** Normalize slot clock label for comparisons (`9:00` and `09:00` → same key). */
+export function normalizeSlotClockLabel(time: string): string {
+    const parts = String(time ?? '').split(':');
+    const h = parseInt(parts[0], 10);
+    const m = parts[1] ? parseInt(parts[1], 10) : 0;
+    if (!Number.isFinite(h) || !Number.isFinite(m)) return String(time ?? '').trim();
+    return `${h}:${String(m).padStart(2, '0')}`;
+}
+
+/** Calendar date key (YYYY-MM-DD) for an instant in IST. */
+export function meetingUtcToIstDateKey(meetingDateUtc: Date): string {
+    const ist = new Date(meetingDateUtc.getTime() + IST_OFFSET_MINUTES * 60_000);
+    const y = ist.getUTCFullYear();
+    const m = String(ist.getUTCMonth() + 1).padStart(2, '0');
+    const d = String(ist.getUTCDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+}
+
+/** Derive display slot start from a booked meeting UTC instant (IST wall clock). */
+export function meetingUtcToSlotStart(
+    meetingDateUtc: Date,
+): Pick<HourSlot, 'startTime' | 'startPeriod'> {
+    const ist = new Date(meetingDateUtc.getTime() + IST_OFFSET_MINUTES * 60_000);
+    const hour24 = ist.getUTCHours();
+    const minutes = ist.getUTCMinutes();
+    const selectedPeriod: 'AM' | 'PM' = hour24 >= 12 ? 'PM' : 'AM';
+    let displayHour = hour24 % 12;
+    if (displayHour === 0) displayHour = 12;
+    const startTime =
+        minutes > 0
+            ? `${displayHour}:${String(minutes).padStart(2, '0')}`
+            : `${displayHour}:00`;
+    return { startTime, startPeriod: selectedPeriod };
+}
+
+export function slotStartKeysMatch(
+    a: Pick<HourSlot, 'startTime' | 'startPeriod'>,
+    b: Pick<HourSlot, 'startTime' | 'startPeriod'>,
+): boolean {
+    return (
+        normalizeSlotClockLabel(a.startTime) === normalizeSlotClockLabel(b.startTime) &&
+        a.startPeriod === b.startPeriod
+    );
+}
+
 /**
  * IST wall-clock slot start as UTC instant (same semantics as manual appointment booking).
  * Example: 2026-06-10 9:00 PM IST → 2026-06-10T15:30:00.000Z
