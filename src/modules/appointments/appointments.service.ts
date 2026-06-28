@@ -1226,6 +1226,20 @@ export class AppointmentsService {
         }
     }
 
+    async getById(appointmentId: string): Promise<AppointmentResponseDto> {
+        const appointment = await this.populateBase(
+            this.appointmentModel.findById(appointmentId),
+        )
+            .lean()
+            .exec();
+
+        if (!appointment) {
+            throw new NotFoundException(`Appointment with ID "${appointmentId}" not found.`);
+        }
+
+        return toAppointmentResponseDto(appointment as AppointmentDocument);
+    }
+
     async getAllUpcoming(userId?: string): Promise<AppointmentResponseDto[]> {
         if (userId) {
             // Check both userId and mentorId fields (user as mentee OR mentor)

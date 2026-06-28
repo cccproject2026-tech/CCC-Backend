@@ -314,6 +314,21 @@ export class AppointmentsController {
     }
 
     /**
+     * Fetch a single appointment by Mongo id (must be declared before `GET :userId`).
+     */
+    @Get('detail/:id')
+    async getById(
+        @Param('id', ParseMongoIdPipe) id: string,
+    ): Promise<BaseResponse<AppointmentResponseDto>> {
+        const data = await this.appointmentsService.getById(id);
+        return {
+            success: true,
+            message: 'Appointment fetched successfully.',
+            data,
+        };
+    }
+
+    /**
      * REST shape `GET /appointments/:userId` — appointments where this user is mentee OR mentor/director mentor role.
      * Declared after static paths (`upcoming`, `user/`, `availability/`, etc.) so it only matches a single Mongo id segment.
      */
