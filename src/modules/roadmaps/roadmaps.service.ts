@@ -42,6 +42,7 @@ import {
     HourSlot,
 } from '../appointments/utils/availability.utils';
 import { AppointmentsService } from '../appointments/appointments.service';
+import { toAppointmentResponseDto } from '../appointments/utils/appointment.mapper';
 import { S3Service } from '../s3/s3.service';
 import { MailerService } from '../../common/utils/mail.util';
 import { ROLES } from '../../common/constants/roles.constants';
@@ -2830,15 +2831,23 @@ export class RoadMapsService {
         const sessions = extras.flatMap(doc =>
             doc.extras
                 .filter((e: any) => e.type === "APPOINTMENT")
-                .map((e: any) => ({
-                    sessionNumber: e.data.sessionNumber,
-                    title: e.data.title,
-                    status: e.data.status,
-                    scheduledDate: e.data.scheduledDate,
-                    mentorNote: e.data.mentorNote,
-                    pastorNote: e.data.pastorNote,
-                    appointmentId: e.data.appointmentId
-                }))
+                .map((e: any) => {
+                    const rawAppointmentId = e.data?.appointmentId;
+                    const appointmentId =
+                        rawAppointmentId != null && String(rawAppointmentId).trim().length > 0
+                            ? String(rawAppointmentId)
+                            : undefined;
+
+                    return {
+                        sessionNumber: e.data.sessionNumber,
+                        title: e.data.title,
+                        status: e.data.status,
+                        scheduledDate: e.data.scheduledDate,
+                        mentorNote: e.data.mentorNote,
+                        pastorNote: e.data.pastorNote,
+                        appointmentId,
+                    };
+                })
         );
 
         const appointmentIds = Array.from(
@@ -2852,25 +2861,31 @@ export class RoadMapsService {
         const appointments = appointmentIds.length
             ? await this.appointmentModel
                   .find({ _id: { $in: appointmentIds.map((id) => new Types.ObjectId(id)) } })
-                  .select('meetingLink zoomMeeting')
                   .lean()
                   .exec()
             : [];
 
         const appointmentById = new Map(
-            appointments.map((a: any) => [String(a._id), a]),
+            appointments.map((a: any) => [String(a._id), toAppointmentResponseDto(a as AppointmentDocument)]),
         );
 
         return sessions
             .map((s) => {
-                const appt = appointmentById.get(String(s.appointmentId));
+                const appt = s.appointmentId
+                    ? appointmentById.get(String(s.appointmentId))
+                    : undefined;
                 const meetingLink =
                     (typeof appt?.meetingLink === 'string' && appt.meetingLink.trim()) ||
                     (typeof appt?.zoomMeeting?.joinUrl === 'string' && appt.zoomMeeting.joinUrl.trim()) ||
                     undefined;
+                const mentorId =
+                    typeof appt?.mentorId === 'string' && appt.mentorId.trim().length > 0
+                        ? appt.mentorId
+                        : undefined;
 
                 return {
                     ...s,
+                    ...(mentorId ? { mentorId } : {}),
                     ...(meetingLink ? { meetingLink } : {}),
                     ...(appt ? { appointment: appt } : {}),
                 };
