@@ -2241,14 +2241,122 @@ export class AppointmentsService {
         );
     }
 
-    async reschedule(appointmentId: string, dto: { newDate: string }) {
-        const IST_OFFSET = 5.5 * 3600 * 1000;
+    /**
+     * Diagnostics when PATCH reschedule rejects a slot that GET /available-slots may have shown.
+     * Uses the same IST date key and {@link getAvailableSlotsForDay} as the slot list endpoint.
+     */
+    private async buildRescheduleSlotDiagnostics(params: {
+        mentorId: string;
+        meetingDateIso: string;
+        participantUserId?: string;
+        excludeAppointmentId: string;
+    }) {
+        const meetingDateUtc = new Date(params.meetingDateIso);
+        const dateStr = meetingUtcToIstDateKey(meetingDateUtc);
+        const requestedSlot = meetingUtcToSlotStart(meetingDateUtc);
+        const mentorOid = new Types.ObjectId(params.mentorId);
 
+        const availability = await this.availabilityModel.findOne({ mentorId: mentorOid }).lean();
+        const { slots: availableSlots } = await this.getAvailableSlotsForDay({
+            mentorId: params.mentorId,
+            date: dateStr,
+            participantUserId: params.participantUserId,
+            excludeAppointmentId: params.excludeAppointmentId,
+        });
+
+        const dayTemplate = availability?.weeklySlots.find(
+            (w) => new Date(w.date).toISOString().split('T')[0] === dateStr,
+        );
+
+        const durationMinutes = availability?.meetingDuration ?? 60;
+        const { dayStartUtc } = this.getIstDayUtcScanRange(dateStr, durationMinutes);
+        const dayEndUtc = new Date(dayStartUtc.getTime() + 24 * 60 * 60 * 1000 - 1);
+        const excludeFilter =
+            params.excludeAppointmentId && Types.ObjectId.isValid(params.excludeAppointmentId)
+                ? { _id: { $ne: new Types.ObjectId(params.excludeAppointmentId) } }
+                : {};
+
+        const bookingCount = await this.appointmentModel.countDocuments({
+            mentorId: mentorOid,
+            meetingDate: { $gte: dayStartUtc, $lte: dayEndUtc },
+            status: { $in: [...this.slotOccupyingStatuses()] },
+            ...excludeFilter,
+        });
+
+        const maxBookings = availability?.maxBookingsPerDay ?? 5;
+        const noticeMs = (availability?.minSchedulingNoticeHours ?? 2) * 60 * 60 * 1000;
+        const slotStartUtc = buildIstSlotStartUtc(dateStr, requestedSlot as HourSlot);
+        const newEndUtc = new Date(slotStartUtc.getTime() + durationMinutes * 60_000);
+
+        const overlap = await this.appointmentModel
+            .findOne({
+                mentorId: mentorOid,
+                ...excludeFilter,
+                meetingDate: { $lt: newEndUtc },
+                endTime: { $gt: slotStartUtc },
+                status: { $in: [...this.slotOccupyingStatuses()] },
+            })
+            .select('_id meetingDate endTime')
+            .lean();
+
+        const [yearPart, monthPart] = dateStr.split('-').map((x) => Number(x));
+        let monthlyAvailability: unknown = null;
+        try {
+            monthlyAvailability = await this.getMonthlyAvailability(
+                params.mentorId,
+                yearPart,
+                monthPart - 1,
+                params.participantUserId,
+                params.excludeAppointmentId,
+            );
+        } catch (e) {
+            monthlyAvailability = {
+                error: e instanceof Error ? e.message : String(e),
+            };
+        }
+
+        const slotCheck = await this.isSlotAvailable({
+            mentorId: params.mentorId,
+            meetingDateIso: params.meetingDateIso,
+            participantUserId: params.participantUserId,
+            excludeAppointmentId: params.excludeAppointmentId,
+        });
+
+        return {
+            mentorId: params.mentorId,
+            requestedDate: dateStr,
+            requestedTime: `${requestedSlot.startTime} ${requestedSlot.startPeriod}`,
+            excludeAppointmentId: params.excludeAppointmentId,
+            availableSlots,
+            mentorAvailability: dayTemplate ?? null,
+            monthlyAvailability,
+            noticePeriodResult: {
+                minSchedulingNoticeHours: availability?.minSchedulingNoticeHours ?? 2,
+                slotStartUtc: slotStartUtc.toISOString(),
+                passes: slotStartUtc.getTime() >= Date.now() + noticeMs,
+            },
+            maxBookingsResult: {
+                bookingCount,
+                maxBookingsPerDay: maxBookings,
+                passes: bookingCount < maxBookings,
+            },
+            overlapResult: {
+                conflictAppointmentId: overlap?._id?.toString() ?? null,
+                passes: !overlap,
+            },
+            isSlotAvailable: slotCheck,
+        };
+    }
+
+    async reschedule(appointmentId: string, dto: { newDate: string }) {
         const appointment = await this.appointmentModel.findById(appointmentId).lean();
         if (!appointment) throw new BadRequestException("Appointment not found.");
 
-        const mentorId = appointment.mentorId;
-        const availability = await this.availabilityModel.findOne({ mentorId }).lean();
+        const mentorId = appointment.mentorId.toString();
+        const participantUserId = appointment.userId?.toString();
+        const availability = await this.availabilityModel
+            .findOne({ mentorId: appointment.mentorId })
+            .lean();
         if (!availability) throw new BadRequestException("Mentor has no availability set.");
 
         const durationMinutes = availability.meetingDuration;
@@ -2256,73 +2364,51 @@ export class AppointmentsService {
             throw new BadRequestException("Invalid meeting duration.");
         }
 
-        // Parse new meeting date
         const meetingDateUtc = new Date(dto.newDate);
-        const meetingInMentorTz = new Date(meetingDateUtc.getTime() + IST_OFFSET);
+        if (Number.isNaN(meetingDateUtc.getTime())) {
+            throw new BadRequestException("Invalid meeting date.");
+        }
 
-        const weekday = meetingInMentorTz.getUTCDay();
-        const selectedHour24 = meetingInMentorTz.getUTCHours();
-        const minute = meetingInMentorTz.getUTCMinutes();
+        const dateStr = meetingUtcToIstDateKey(meetingDateUtc);
+        const requestedSlotStart = meetingUtcToSlotStart(meetingDateUtc);
 
-        if (minute !== 0)
-            throw new BadRequestException("Time must start exactly at the hour.");
-
-        // Compute start slot for new time
-        const selectedPeriod = selectedHour24 >= 12 ? "PM" : "AM";
-        let displayHour = selectedHour24 % 12;
-        if (displayHour === 0) displayHour = 12;
-
-        // Compute NEW end time
-        const newEndUtc = new Date(meetingDateUtc.getTime() + durationMinutes * 60000);
-        const newEndLocal = new Date(newEndUtc.getTime() + IST_OFFSET);
-
-        const endHour24 = newEndLocal.getUTCHours();
-        const endPeriod = endHour24 >= 12 ? "PM" : "AM";
-
-        let endDisplayHour = endHour24 % 12;
-        if (endDisplayHour === 0) endDisplayHour = 12;
-
-        const selectedSlot = {
-            startTime: `${displayHour}:00`,
-            startPeriod: selectedPeriod,
-            endTime: `${endDisplayHour}:00`,
-            endPeriod: endPeriod
-        };
-
-        // Check availability
-        const dateStr = meetingDateUtc.toISOString().split("T")[0];
-
-        const dayAvailability = availability.weeklySlots.find(
-            d => d.date.toISOString().split("T")[0] === dateStr
-        );
-
-        if (!dayAvailability || (dayAvailability as { unavailable?: boolean }).unavailable || dayAvailability.slots.length === 0)
-            throw new BadRequestException("Mentor is not available on this date.");
-
-        const slotExists = dayAvailability.slots.some(s =>
-            s.startTime === selectedSlot.startTime &&
-            s.startPeriod === selectedSlot.startPeriod &&
-            s.endTime === selectedSlot.endTime &&
-            s.endPeriod === selectedSlot.endPeriod
-        );
-
-        if (!slotExists)
-            throw new BadRequestException("Selected slot is not available.");
-
-        // Overlap check
-        const overlap = await this.appointmentModel.findOne({
+        const slotCheck = await this.isSlotAvailable({
             mentorId,
-            _id: { $ne: appointmentId },
-            meetingDate: { $lt: newEndUtc },
-            endTime: { $gt: meetingDateUtc },
-            status: { $in: [...this.slotOccupyingStatuses()] },
+            meetingDateIso: dto.newDate,
+            participantUserId,
+            excludeAppointmentId: appointmentId,
         });
 
-        if (overlap)
-            throw new BadRequestException("This slot is already booked by another appointment.");
+        if (!slotCheck.available) {
+            const diagnostics = await this.buildRescheduleSlotDiagnostics({
+                mentorId,
+                meetingDateIso: dto.newDate,
+                participantUserId,
+                excludeAppointmentId: appointmentId,
+            });
+            console.log(diagnostics);
+            this.logger.warn(
+                `[Reschedule] slot rejected appointmentId=${appointmentId} mentorId=${mentorId} date=${dateStr} slot=${requestedSlotStart.startTime} ${requestedSlotStart.startPeriod} reason=${slotCheck.reason ?? 'unknown'}`,
+            );
+            throw new BadRequestException(
+                slotCheck.reason ?? "This slot is not available.",
+            );
+        }
+
+        const dayAvailability = availability.weeklySlots.find(
+            (d) => new Date(d.date).toISOString().split("T")[0] === dateStr,
+        );
+        const selectedSlot = dayAvailability?.slots.find((s) =>
+            slotStartKeysMatch(s, requestedSlotStart),
+        );
+        if (!selectedSlot) {
+            throw new BadRequestException("Selected slot is not available.");
+        }
+
+        const newEndUtc = new Date(meetingDateUtc.getTime() + durationMinutes * 60000);
 
         await this.assertParticipantsGoogleFree(
-            mentorId.toString(),
+            mentorId,
             this.nonMentorPartyGoogleCalendarUserId(appointment as {
                 userId: Types.ObjectId;
                 googleCalendarNonMentorUserId?: Types.ObjectId | null;
@@ -2335,65 +2421,29 @@ export class AppointmentsService {
             },
         );
 
-        // 🚨 enforce max bookings per day for new date
-        const startOfDay = new Date(meetingDateUtc);
-        startOfDay.setHours(0, 0, 0, 0);
-
-        const endOfDay = new Date(meetingDateUtc);
-        endOfDay.setHours(23, 59, 59, 999);
-
-        const dailyCount = await this.appointmentModel.countDocuments({
-            mentorId,
-            meetingDate: { $gte: startOfDay, $lte: endOfDay },
-            status: { $in: [...this.slotOccupyingStatuses()] },
-            _id: { $ne: appointmentId }
-        });
-
-        if (dailyCount >= (availability.maxBookingsPerDay ?? 5)) {
-            throw new BadRequestException(
-                "Mentor has reached maximum bookings for this day."
-            );
-        }
-
-        // Restore old slot 
         const oldMeetingUtc = new Date(appointment.meetingDate);
-        const oldLocal = new Date(oldMeetingUtc.getTime() + IST_OFFSET);
-
-        // const oldWeekday = oldLocal.getUTCDay();
-        const oldHour24 = oldLocal.getUTCHours();
-        const oldPeriod = oldHour24 >= 12 ? "PM" : "AM";
-
-        let oldDisplay = oldHour24 % 12;
-        if (oldDisplay === 0) oldDisplay = 12;
-
-        // Old end calculation
+        const oldDateStr = meetingUtcToIstDateKey(oldMeetingUtc);
+        const oldSlotStart = meetingUtcToSlotStart(oldMeetingUtc);
+        const oldDayAvailability = availability.weeklySlots.find(
+            (d) => new Date(d.date).toISOString().split("T")[0] === oldDateStr,
+        );
         const oldEndUtc = new Date(oldMeetingUtc.getTime() + durationMinutes * 60000);
-        const oldEndLocal = new Date(oldEndUtc.getTime() + IST_OFFSET);
-
-        const oldEndHour24 = oldEndLocal.getUTCHours();
-        const oldEndPeriod = oldEndHour24 >= 12 ? "PM" : "AM";
-
-        let oldEndDisplay = oldEndHour24 % 12;
-        if (oldEndDisplay === 0) oldEndDisplay = 12;
-
-        const oldSlot = {
-            startTime: `${oldDisplay}:00`,
-            startPeriod: oldPeriod,
-            endTime: `${oldEndDisplay}:00`,
-            endPeriod: oldEndPeriod
-        };
-
-        // Restore old slot back into availability
-        const oldDateStr = oldMeetingUtc.toISOString().split("T")[0];
+        const oldSlot =
+            oldDayAvailability?.slots.find((s) => slotStartKeysMatch(s, oldSlotStart)) ?? {
+                startTime: oldSlotStart.startTime,
+                startPeriod: oldSlotStart.startPeriod,
+                endTime: meetingUtcToSlotStart(oldEndUtc).startTime,
+                endPeriod: meetingUtcToSlotStart(oldEndUtc).startPeriod,
+            };
 
         await this.availabilityModel.updateOne(
-            { mentorId, "weeklySlots.date": new Date(oldDateStr) },
-            { $addToSet: { "weeklySlots.$.slots": oldSlot } }
+            { mentorId: appointment.mentorId, "weeklySlots.date": new Date(oldDateStr) },
+            { $addToSet: { "weeklySlots.$.slots": oldSlot } },
         );
 
         await this.availabilityModel.updateOne(
-            { mentorId, "weeklySlots.date": new Date(dateStr) },
-            { $pull: { "weeklySlots.$.slots": selectedSlot } }
+            { mentorId: appointment.mentorId, "weeklySlots.date": new Date(dateStr) },
+            { $pull: { "weeklySlots.$.slots": selectedSlot } },
         );
 
         const updated = await this.populateBase(

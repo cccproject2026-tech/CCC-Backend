@@ -619,18 +619,29 @@ export class MentoringSessionsService {
             .findById(pastorIdStr)
             .select('assignedId')
             .lean();
-        const currentAssignedMentorId = pastor?.assignedId?.[0]?.toString();
-        const appointmentMentorId = String(appointment.mentorId);
-        const isAppointmentMentor = appointmentMentorId === mentorId;
-        const isCurrentlyAssignedMentor =
-            currentAssignedMentorId != null && currentAssignedMentorId === mentorId;
+        const mentor = await this.userModel
+            .findById(mentorId)
+            .select('assignedId role')
+            .lean();
 
-        if (!isAppointmentMentor && !isCurrentlyAssignedMentor) {
+        const assignedMentorIds = (pastor?.assignedId ?? []).map((id) => String(id));
+        const appointmentMentorRaw = appointment.mentorId;
+        const appointmentMentorId =
+            appointmentMentorRaw != null && String(appointmentMentorRaw).length > 0
+                ? String(appointmentMentorRaw)
+                : '';
+        const isAppointmentMentor =
+            appointmentMentorId.length > 0 && appointmentMentorId === mentorId;
+        const isPastorAssignedMentor = assignedMentorIds.includes(mentorId);
+        const isMentorLinkedToPastor = (mentor?.assignedId ?? []).some(
+            (id) => String(id) === pastorIdStr,
+        );
+
+        if (!isAppointmentMentor && !isPastorAssignedMentor && !isMentorLinkedToPastor) {
             throw new ForbiddenException('Only the assigned mentor may reschedule.');
         }
 
-        // Pastor may have been reassigned after Jumpstart/auto-book; sync ownership for reschedule.
-        if (!isAppointmentMentor && isCurrentlyAssignedMentor) {
+        if (!isAppointmentMentor && (isPastorAssignedMentor || isMentorLinkedToPastor)) {
             await this.appointmentModel.updateOne(
                 { _id: appointment._id },
                 { $set: { mentorId: new Types.ObjectId(mentorId) } },
