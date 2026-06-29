@@ -248,11 +248,18 @@ export class AppointmentsController {
         @Query('year') year: string,
         @Query('month') month: string,
         @Query('participantUserId') participantUserId?: string,
+        @Query('excludeAppointmentId') excludeAppointmentId?: string,
     ) {
         const y = Number(year);
         const m = Number(month) - 1;
 
-        const data = await this.appointmentsService.getMonthlyAvailability(mentorId, y, m, participantUserId);
+        const data = await this.appointmentsService.getMonthlyAvailability(
+            mentorId,
+            y,
+            m,
+            participantUserId,
+            excludeAppointmentId?.trim() || undefined,
+        );
 
         return {
             success: true,

@@ -613,11 +613,29 @@ export class MentoringSessionsService {
 
         const appointment = await this.appointmentModel.findById(sessionId).lean();
         if (!appointment) throw new NotFoundException('Appointment not found.');
-        if (String(appointment.mentorId) !== mentorId) {
+
+        const pastorIdStr = String(appointment.userId);
+        const pastor = await this.userModel
+            .findById(pastorIdStr)
+            .select('assignedId')
+            .lean();
+        const currentAssignedMentorId = pastor?.assignedId?.[0]?.toString();
+        const appointmentMentorId = String(appointment.mentorId);
+        const isAppointmentMentor = appointmentMentorId === mentorId;
+        const isCurrentlyAssignedMentor =
+            currentAssignedMentorId != null && currentAssignedMentorId === mentorId;
+
+        if (!isAppointmentMentor && !isCurrentlyAssignedMentor) {
             throw new ForbiddenException('Only the assigned mentor may reschedule.');
         }
 
-        const pastorIdStr = String(appointment.userId);
+        // Pastor may have been reassigned after Jumpstart/auto-book; sync ownership for reschedule.
+        if (!isAppointmentMentor && isCurrentlyAssignedMentor) {
+            await this.appointmentModel.updateOne(
+                { _id: appointment._id },
+                { $set: { mentorId: new Types.ObjectId(mentorId) } },
+            );
+        }
 
         let sessionNumber = 0;
         const extrasDocs = await this.extrasModel

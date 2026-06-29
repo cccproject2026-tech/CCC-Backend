@@ -2176,6 +2176,7 @@ export class AppointmentsService {
         year: number,
         month: number,
         participantUserId?: string,
+        excludeAppointmentId?: string,
     ) {
         const objectId = new Types.ObjectId(mentorId);
         const data = await this.availabilityModel.findOne({ mentorId: objectId }).lean();
@@ -2204,10 +2205,15 @@ export class AppointmentsService {
                 const endOfDay = new Date(dayDate);
                 endOfDay.setHours(23, 59, 59, 999);
 
+                const excludeFilter =
+                    excludeAppointmentId && Types.ObjectId.isValid(excludeAppointmentId)
+                        ? { _id: { $ne: new Types.ObjectId(excludeAppointmentId) } }
+                        : {};
                 const bookingCount = await this.appointmentModel.countDocuments({
                     mentorId: objectId,
                     meetingDate: { $gte: startOfDay, $lte: endOfDay },
                     status: { $in: [...this.slotOccupyingStatuses()] },
+                    ...excludeFilter,
                 });
 
                 if (dayUnavailable || bookingCount >= (data.maxBookingsPerDay ?? 5)) {
