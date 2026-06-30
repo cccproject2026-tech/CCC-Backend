@@ -63,6 +63,8 @@ export function reconcileProgressAssessments(
                 ...entry,
                 completedSections: next.completedSections,
                 totalSections: next.totalSections,
+                progressPercentage: next.progressPercentage,
+                status: next.status,
             };
         }
 

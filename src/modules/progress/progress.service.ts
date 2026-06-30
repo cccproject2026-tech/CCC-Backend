@@ -30,6 +30,8 @@ import { MailerService } from '../../common/utils/mail.util';
 import { ROLES } from '../../common/constants/roles.constants';
 import {
     countCompletedAnswerSections,
+    assessmentProgressNeedsUpdate,
+    type AnswerSectionSlice,
 } from './utils/assessment-progress.util';
 import { reconcileProgressAssessments } from './utils/reconcile-progress-assessments';
 import {
@@ -201,6 +203,71 @@ export class ProgressService {
         }
 
         await this.syncMissingAssignedAssessments(progress);
+        await progress.save();
+    }
+
+    /** Sync one assessment row from saved answers (submit vs mentor CDP). */
+    async syncAssessmentProgressFromAnswers(
+        userId: string,
+        assessmentId: string,
+    ): Promise<void> {
+        if (!Types.ObjectId.isValid(userId) || !Types.ObjectId.isValid(assessmentId)) {
+            return;
+        }
+
+        const userObjectId = new Types.ObjectId(userId);
+        const userIdString = userObjectId.toString();
+        const assessmentObjectId = new Types.ObjectId(assessmentId);
+
+        const progress = await this.progressModel
+            .findOne({
+                $or: [{ userId: userObjectId }, { userId: userIdString }],
+                'assessments.assessmentId': assessmentObjectId,
+            })
+            .exec();
+
+        if (!progress) {
+            return;
+        }
+
+        const [template, answerDoc] = await Promise.all([
+            this.assessmentModel
+                .findById(assessmentObjectId)
+                .select('sections')
+                .lean()
+                .exec(),
+            this.userAnswerModel
+                .findOne({
+                    assessmentId: assessmentObjectId,
+                    $or: [{ userId: userObjectId }, { userId: userIdString }],
+                })
+                .select('sections')
+                .lean()
+                .exec(),
+        ]);
+
+        const entry = progress.assessments.find(
+            (item) => item.assessmentId.toString() === assessmentId,
+        );
+        if (!entry) {
+            return;
+        }
+
+        const next = assessmentProgressNeedsUpdate(
+            entry,
+            template?.sections?.length ?? 0,
+            answerDoc?.sections as AnswerSectionSlice[] | undefined,
+        );
+
+        if (!next.changed) {
+            return;
+        }
+
+        entry.completedSections = next.completedSections;
+        entry.totalSections = next.totalSections;
+        entry.progressPercentage = next.progressPercentage;
+        entry.status = next.status;
+        progress.markModified('assessments');
         await progress.save();
     }
 

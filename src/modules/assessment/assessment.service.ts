@@ -26,7 +26,6 @@ import { MailerService } from '../../common/utils/mail.util';
 import { ROLES } from '../../common/constants/roles.constants';
 import { assessmentSectionRecommendationNotification } from '../../common/utils/notification-copy.util';
 import { RoadmapAssessmentCompletionService } from '../roadmaps/roadmap-assessment-completion.service';
-import { countCompletedAnswerSections } from '../progress/utils/assessment-progress.util';
 import { ProgressService } from '../progress/progress.service';
 
 @Injectable()
@@ -644,37 +643,14 @@ export class AssessmentService {
   private async syncAssessmentProgressCompletedSections(
     userId: string,
     assessmentId: string,
-    sections?: { layers?: unknown[] }[],
+    _sections?: { layers?: unknown[] }[],
   ): Promise<void> {
-    const completedSectionsCount = countCompletedAnswerSections(sections);
-    if (completedSectionsCount <= 0) {
-      return;
-    }
-
-    const assessmentIdObj = new Types.ObjectId(assessmentId);
-    const userIdObj = new Types.ObjectId(userId);
-    const userIdString = userIdObj.toString();
-
-    const progressUpdateResult = await this.progressModel.findOneAndUpdate(
-      {
-        $or: [
-          { userId: userIdObj },
-          { userId: userIdString },
-        ],
-        'assessments.assessmentId': assessmentIdObj,
-      },
-      {
-        $set: {
-          'assessments.$.completedSections': completedSectionsCount,
-        },
-      },
-      { new: true },
-    ).exec();
-
-    if (!progressUpdateResult) {
+    try {
+      await this.progressService.syncAssessmentProgressFromAnswers(userId, assessmentId);
+    } catch (err) {
       this.logger.warn(
-        `Progress not found for userId: ${userId}, assessmentId: ${assessmentId}. ` +
-        `Assessment should be assigned via assignAssessment() before saving answers.`,
+        `Progress sync failed for userId: ${userId}, assessmentId: ${assessmentId}. ` +
+          `${err instanceof Error ? err.message : err}`,
       );
     }
   }
@@ -1119,6 +1095,10 @@ export class AssessmentService {
         userId,
         assessmentId,
         updated,
+      );
+      await this.progressService.syncAssessmentProgressFromAnswers(
+        userId,
+        assessmentId,
       );
     } catch (err) {
       this.logger.error(

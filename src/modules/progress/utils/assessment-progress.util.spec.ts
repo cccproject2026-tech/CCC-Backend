@@ -1,4 +1,8 @@
-import { computeOverallProgressFromBuckets, countCompletedAnswerSections } from './assessment-progress.util';
+import {
+    computeOverallProgressFromBuckets,
+    countCompletedAnswerSections,
+    deriveAssessmentProgressFromAnswers,
+} from './assessment-progress.util';
 
 describe('countCompletedAnswerSections', () => {
     it('counts only sections with layer answers', () => {
@@ -13,6 +17,41 @@ describe('countCompletedAnswerSections', () => {
 
     it('returns 0 for missing sections', () => {
         expect(countCompletedAnswerSections(undefined)).toBe(0);
+    });
+});
+
+describe('deriveAssessmentProgressFromAnswers', () => {
+    it('marks fully submitted answers as submitted with 0% until CDP', () => {
+        const result = deriveAssessmentProgressFromAnswers(
+            [
+                { layers: [{}] },
+                { layers: [{}] },
+            ],
+            2,
+        );
+        expect(result.status).toBe('submitted');
+        expect(result.progressPercentage).toBe(0);
+    });
+
+    it('marks mentor CDP as completed at 100%', () => {
+        const result = deriveAssessmentProgressFromAnswers(
+            [
+                { layers: [{}], recommendations: ['Grow in prayer'] },
+                { layers: [{}] },
+            ],
+            2,
+        );
+        expect(result.status).toBe('completed');
+        expect(result.progressPercentage).toBe(100);
+    });
+
+    it('keeps partial answers in progress below 100%', () => {
+        const result = deriveAssessmentProgressFromAnswers(
+            [{ layers: [{}] }],
+            2,
+        );
+        expect(result.status).toBe('in_progress');
+        expect(result.progressPercentage).toBe(50);
     });
 });
 

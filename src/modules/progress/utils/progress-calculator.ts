@@ -66,13 +66,38 @@ export function calculateProgress(doc: any): void {
     // --- Assessments ---
     let completedAssessments = 0;
     doc.assessments.forEach((a: any) => {
-        if (a.totalSections > 0)
-            a.progressPercentage = Math.min((a.completedSections / a.totalSections) * 100, 100);
-        else a.progressPercentage = 0;
+        if (a.status === PROGRESS_STATUSES.COMPLETED) {
+            a.progressPercentage = 100;
+            if (a.totalSections > 0) {
+                a.completedSections = Math.max(a.completedSections ?? 0, a.totalSections);
+            }
+            totalAssessmentPercent += 100;
+            completedAssessments++;
+            return;
+        }
 
-        if (a.progressPercentage >= 100) a.status = PROGRESS_STATUSES.COMPLETED;
-        else if (a.progressPercentage > 0) a.status = PROGRESS_STATUSES.IN_PROGRESS;
-        else a.status = PROGRESS_STATUSES.NOT_STARTED;
+        if (a.status === PROGRESS_STATUSES.SUBMITTED) {
+            a.progressPercentage = 0;
+            totalAssessmentPercent += 0;
+            return;
+        }
+
+        if (a.totalSections > 0) {
+            const answered = a.completedSections ?? 0;
+            if (answered >= a.totalSections) {
+                a.status = PROGRESS_STATUSES.SUBMITTED;
+                a.progressPercentage = 0;
+            } else if (answered > 0) {
+                a.progressPercentage = Math.min((answered / a.totalSections) * 100, 99);
+                a.status = PROGRESS_STATUSES.IN_PROGRESS;
+            } else {
+                a.progressPercentage = 0;
+                a.status = PROGRESS_STATUSES.NOT_STARTED;
+            }
+        } else {
+            a.progressPercentage = 0;
+            a.status = PROGRESS_STATUSES.NOT_STARTED;
+        }
 
         totalAssessmentPercent += a.progressPercentage;
         if (a.status === PROGRESS_STATUSES.COMPLETED) completedAssessments++;
