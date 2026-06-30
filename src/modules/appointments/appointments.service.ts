@@ -48,6 +48,7 @@ import {
     GoogleCalendarService,
     subtractIntervalFromBusyIntervals,
     intervalOverlapsBusy,
+    BusyInterval,
 } from '../google-calendar/google-calendar.service';
 import { formatMeetingDateForNotification } from '../../common/utils/notification-copy.util';
 import { TranscriptSummaryService } from './transcript-summary.service';
@@ -264,12 +265,12 @@ export class AppointmentsService {
         end: Date,
         excludeCurrentAppointment?: { meetingDate: Date; endTime: Date },
     ): Promise<void> {
-        let mentorBusy = await this.googleCalendarService.listBusyIntervals(mentorIdStr, start, end);
-        let nonMentorBusy = await this.googleCalendarService.listBusyIntervals(
-            nonMentorPartyUserIdStr,
-            start,
-            end,
-        );
+        const [mentorBusyRaw, nonMentorBusyRaw] = await Promise.all([
+            this.googleCalendarService.listBusyIntervals(mentorIdStr, start, end),
+            this.googleCalendarService.listBusyIntervals(nonMentorPartyUserIdStr, start, end),
+        ]);
+        let mentorBusy = mentorBusyRaw;
+        let nonMentorBusy = nonMentorBusyRaw;
 
         if (excludeCurrentAppointment) {
             const gap = {
@@ -305,20 +306,20 @@ export class AppointmentsService {
 
         const { dayStartUtc, scanEndUtc } = this.getIstDayUtcScanRange(dateStr, durationMinutes);
 
-        let mentorBusy = await this.googleCalendarService.listBusyIntervals(
-            mentorIdStr,
-            dayStartUtc,
-            scanEndUtc,
-        );
-
-        let pastorBusy =
-            participantUserIdStr && Types.ObjectId.isValid(participantUserIdStr)
-                ? await this.googleCalendarService.listBusyIntervals(
+        const participantLinked =
+            participantUserIdStr && Types.ObjectId.isValid(participantUserIdStr);
+        const [mentorBusyRaw, pastorBusyRaw] = await Promise.all([
+            this.googleCalendarService.listBusyIntervals(mentorIdStr, dayStartUtc, scanEndUtc),
+            participantLinked
+                ? this.googleCalendarService.listBusyIntervals(
                       participantUserIdStr,
                       dayStartUtc,
                       scanEndUtc,
                   )
-                : [];
+                : Promise.resolve([] as BusyInterval[]),
+        ]);
+        let mentorBusy = mentorBusyRaw;
+        let pastorBusy = pastorBusyRaw;
 
         this.logger.debug(
             `[GoogleBusy] date=${dateStr} range_utc=${dayStartUtc.toISOString()}..${scanEndUtc.toISOString()} mentor_busy_count=${mentorBusy.length} participant_busy_count=${pastorBusy.length}`,
@@ -726,6 +727,7 @@ export class AppointmentsService {
         const nonMentorGoogleUserIdStr = this.resolveNonMentorGoogleUserIdFromCreateDto(dto);
 
         const isHostInitiated = dto.initiatorRole ? isHostRole(dto.initiatorRole) : false;
+        let slotGoogleFreeVerified = false;
 
         const availability = await this.availabilityModel.findOne({ mentorId }).lean();
         if (!availability && !isHostInitiated) {
@@ -751,6 +753,7 @@ export class AppointmentsService {
                     slotAvailability.reason ?? 'This slot is not available.',
                 );
             }
+            slotGoogleFreeVerified = true;
         }
 
         const meetingDate = meetingDateUtc;
@@ -887,17 +890,23 @@ export class AppointmentsService {
             }
         }
         const finalStartDate = new Date(finalMeetingDate);
+        const meetingDateChanged = finalStartDate.getTime() !== meetingDateUtc.getTime();
 
-        await this.assertParticipantsGoogleFree(
-            dto.mentorId,
-            nonMentorGoogleUserIdStr,
-            finalStartDate,
-            new Date(finalStartDate.getTime() + durationMinutes * 60000),
-        );
+        if (isHostInitiated || meetingDateChanged || !slotGoogleFreeVerified) {
+            await this.assertParticipantsGoogleFree(
+                dto.mentorId,
+                nonMentorGoogleUserIdStr,
+                finalStartDate,
+                new Date(finalStartDate.getTime() + durationMinutes * 60000),
+            );
+        }
 
         // Get user and mentor details for Zoom meeting topic
-        const userDoc = await this.appointmentModel.db.model('User').findById(dto.userId).lean() as any;
-        const mentorDoc = await this.appointmentModel.db.model('User').findById(dto.mentorId).lean() as any;
+        const UserModel = this.appointmentModel.db.model('User');
+        const [userDoc, mentorDoc] = await Promise.all([
+            UserModel.findById(dto.userId).lean() as Promise<any>,
+            UserModel.findById(dto.mentorId).lean() as Promise<any>,
+        ]);
 
         let nonMentorPartyDoc = userDoc as any;
         if (nonMentorGoogleUserIdStr !== dto.userId) {
@@ -1065,99 +1074,143 @@ export class AppointmentsService {
 
         this.scheduleAvailabilityMirrorsSyncToGoogle(dto.mentorId);
 
-        const googleCalendarSyncWarnings = await this.syncGoogleCalendarAfterBooking({
-            appointmentId: saved._id as Types.ObjectId,
-            mentorId: dto.mentorId,
-            nonMentorGoogleUserId: nonMentorGoogleUserIdStr,
-            start: finalStartDate,
-            end: new Date(finalStartDate.getTime() + durationMinutes * 60000),
-            topic: googleCalendarTitle,
-            description: [googleCalendarDescription, meetingLink ? `Join: ${meetingLink}` : '']
-                .filter(Boolean)
-                .join('\n'),
-            mentorAttendeeEmail,
-            nonMentorAttendeeEmail,
-        });
-
         const result = toAppointmentResponseDto(populated as AppointmentDocument);
 
-        const googleRow = await this.appointmentModel
-            .findById(saved._id)
-            .select('mentorGoogleCalendarEventId userGoogleCalendarEventId')
-            .lean()
-            .exec();
-        if (googleRow) {
-            result.mentorGoogleCalendarEventId = googleRow.mentorGoogleCalendarEventId ?? undefined;
-            result.userGoogleCalendarEventId = googleRow.userGoogleCalendarEventId ?? undefined;
-        }
-        if (googleCalendarSyncWarnings.length > 0) {
-            result.googleCalendarSyncWarnings = googleCalendarSyncWarnings;
-        }
-
-        try {
-            const whenLabel = formatMeetingDateForNotification(result.meetingDate);
-            const zoomInfo = meetingLink ? ` Join Zoom: ${meetingLink}` : '';
-
-            await this.notificationService.addNotification({
-                userId: dto.userId,
-                name: 'Appointment scheduled',
-                details: `Your mentorship session with ${mentorName} is on ${whenLabel}.${zoomInfo}`,
-                module: 'APPOINTMENT',
-                referenceId: result.id,
-            });
-
-            await this.notificationService.addNotification({
-                userId: dto.mentorId,
-                name: 'New session booked',
-                details: `${userName} scheduled a mentorship session with you for ${whenLabel}.${zoomInfo}`,
-                module: 'APPOINTMENT',
-                referenceId: result.id,
-            });
-
-            await this.notificationService.addNotification({
-                role: ROLES.DIRECTOR,
-                name: 'Appointment booked',
-                details: `${userName} booked a session with ${mentorName} (${whenLabel}).`,
-                module: 'APPOINTMENT',
-                referenceId: result.id,
-            });
-
-            // Send email notifications to pastor (user) and mentor if Zoom link exists
-            if (meetingLink && zoomMeeting) {
-                const emailOpts = {
-                    joinUrl: meetingLink,
-                    password: zoomMeeting.password,
-                    meetingId: zoomMeeting.meetingId,
-                    durationMinutes,
-                    meetingDate: result.meetingDate,
-                };
-
-                if (userDoc?.email) {
-                    await this.mailerService.sendAppointmentConfirmation({
-                        to: userDoc.email,
-                        recipientName: userName,
-                        otherPartyName: mentorName,
-                        role: 'pastor',
-                        ...emailOpts,
-                    });
-                }
-
-                if (mentorDoc?.email) {
-                    await this.mailerService.sendAppointmentConfirmation({
-                        to: mentorDoc.email,
-                        recipientName: mentorName,
-                        otherPartyName: userName,
-                        role: 'mentor',
-                        ...emailOpts,
-                    });
-                }
-            }
-
-        } catch (err) {
-            this.logger.warn(`Failed to send appointment notifications: ${err?.message ?? err}`);
-        }
+        void this.runPostBookingSideEffects({
+            appointmentId: saved._id as Types.ObjectId,
+            dto,
+            result,
+            finalStartDate,
+            durationMinutes,
+            googleCalendarTitle,
+            googleCalendarDescription,
+            meetingLink,
+            mentorAttendeeEmail,
+            nonMentorAttendeeEmail,
+            nonMentorGoogleUserIdStr,
+            userDoc,
+            mentorDoc,
+            userName,
+            mentorName,
+            zoomMeeting,
+        });
 
         return result;
+    }
+
+    /** Google Calendar sync, in-app notifications, and confirmation emails — off the booking response path. */
+    private runPostBookingSideEffects(params: {
+        appointmentId: Types.ObjectId;
+        dto: CreateAppointmentDto;
+        result: AppointmentResponseDto;
+        finalStartDate: Date;
+        durationMinutes: number;
+        googleCalendarTitle: string;
+        googleCalendarDescription?: string;
+        meetingLink: string | null;
+        mentorAttendeeEmail?: string;
+        nonMentorAttendeeEmail?: string;
+        nonMentorGoogleUserIdStr: string;
+        userDoc: any;
+        mentorDoc: any;
+        userName: string;
+        mentorName: string;
+        zoomMeeting: any;
+    }): void {
+        void (async () => {
+            try {
+                await this.syncGoogleCalendarAfterBooking({
+                    appointmentId: params.appointmentId,
+                    mentorId: params.dto.mentorId,
+                    nonMentorGoogleUserId: params.nonMentorGoogleUserIdStr,
+                    start: params.finalStartDate,
+                    end: new Date(
+                        params.finalStartDate.getTime() + params.durationMinutes * 60000,
+                    ),
+                    topic: params.googleCalendarTitle,
+                    description: [
+                        params.googleCalendarDescription,
+                        params.meetingLink ? `Join: ${params.meetingLink}` : '',
+                    ]
+                        .filter(Boolean)
+                        .join('\n'),
+                    mentorAttendeeEmail: params.mentorAttendeeEmail,
+                    nonMentorAttendeeEmail: params.nonMentorAttendeeEmail,
+                });
+            } catch (err: unknown) {
+                const msg = err instanceof Error ? err.message : String(err);
+                this.logger.warn(`Post-booking Google Calendar sync failed: ${msg}`);
+            }
+
+            try {
+                const whenLabel = formatMeetingDateForNotification(params.result.meetingDate);
+                const zoomInfo = params.meetingLink ? ` Join Zoom: ${params.meetingLink}` : '';
+
+                await Promise.all([
+                    this.notificationService.addNotification({
+                        userId: params.dto.userId,
+                        name: 'Appointment scheduled',
+                        details: `Your mentorship session with ${params.mentorName} is on ${whenLabel}.${zoomInfo}`,
+                        module: 'APPOINTMENT',
+                        referenceId: params.result.id,
+                    }),
+                    this.notificationService.addNotification({
+                        userId: params.dto.mentorId,
+                        name: 'New session booked',
+                        details: `${params.userName} scheduled a mentorship session with you for ${whenLabel}.${zoomInfo}`,
+                        module: 'APPOINTMENT',
+                        referenceId: params.result.id,
+                    }),
+                    this.notificationService.addNotification({
+                        role: ROLES.DIRECTOR,
+                        name: 'Appointment booked',
+                        details: `${params.userName} booked a session with ${params.mentorName} (${whenLabel}).`,
+                        module: 'APPOINTMENT',
+                        referenceId: params.result.id,
+                    }),
+                ]);
+
+                if (params.meetingLink && params.zoomMeeting) {
+                    const emailOpts = {
+                        joinUrl: params.meetingLink,
+                        password: params.zoomMeeting.password,
+                        meetingId: params.zoomMeeting.meetingId,
+                        durationMinutes: params.durationMinutes,
+                        meetingDate: params.result.meetingDate,
+                    };
+
+                    const emailTasks: Promise<unknown>[] = [];
+                    if (params.userDoc?.email) {
+                        emailTasks.push(
+                            this.mailerService.sendAppointmentConfirmation({
+                                to: params.userDoc.email,
+                                recipientName: params.userName,
+                                otherPartyName: params.mentorName,
+                                role: 'pastor',
+                                ...emailOpts,
+                            }),
+                        );
+                    }
+                    if (params.mentorDoc?.email) {
+                        emailTasks.push(
+                            this.mailerService.sendAppointmentConfirmation({
+                                to: params.mentorDoc.email,
+                                recipientName: params.mentorName,
+                                otherPartyName: params.userName,
+                                role: 'mentor',
+                                ...emailOpts,
+                            }),
+                        );
+                    }
+                    if (emailTasks.length) {
+                        await Promise.all(emailTasks);
+                    }
+                }
+            } catch (err: unknown) {
+                const msg = err instanceof Error ? err.message : String(err);
+                this.logger.warn(`Failed to send appointment notifications: ${msg}`);
+            }
+        })();
     }
 
     async getAppointments(options?: {
