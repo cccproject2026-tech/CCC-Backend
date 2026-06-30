@@ -2347,8 +2347,9 @@ export class RoadMapsService {
     }
 
     /**
-     * Blocks Jumpstart (“single” roadmap) completion when the assigned mentor has no availability.
-     * Must run before extras/progress writes so roadmap completion and Session 1 are not partially applied.
+     * Blocks pastor Jumpstart (“single” roadmap) extras saves when the assigned mentor cannot
+     * host Session 1. Runs on every POST/PATCH extras write (not only the final step) so partial
+     * saves cannot bump progress while the mentor is unavailable.
      */
     private async assertMentorAvailabilityBeforeJumpstartCompletion(
         pastorUserIdObjectId: Types.ObjectId,
@@ -2356,43 +2357,17 @@ export class RoadMapsService {
         roadMapObjectId: Types.ObjectId,
         additionalCompletedSteps: number,
     ): Promise<void> {
+        if (additionalCompletedSteps <= 0) {
+            return;
+        }
+
         const roadmapRow = await this.roadMapModel
             .findById(roadMapObjectId)
-            .select('type totalSteps extras roadmaps')
+            .select('type')
             .lean()
             .exec();
 
         if (roadmapRow?.type?.trim()?.toLowerCase() !== 'single') {
-            return;
-        }
-
-        const userIdFlexibleQuery = {
-            $or: [
-                { userId: pastorUserIdObjectId },
-                ...(pastorUserIdString ? [{ userId: pastorUserIdString }] : []),
-            ],
-        };
-
-        const progress = await this.progressModel.findOne(userIdFlexibleQuery).lean().exec();
-        const entry = progress?.roadmaps?.find(
-            (r: { roadMapId: Types.ObjectId }) =>
-                r.roadMapId.toString() === roadMapObjectId.toString(),
-        );
-
-        if (!entry) {
-            return;
-        }
-
-        let totalSteps = typeof entry.totalSteps === 'number' ? entry.totalSteps : 0;
-        if (totalSteps <= 0) {
-            totalSteps = resolveRoadmapProgressTotalSteps(roadmapRow);
-        }
-        if (totalSteps <= 0) {
-            return;
-        }
-
-        const projectedCompleted = (entry.completedSteps ?? 0) + additionalCompletedSteps;
-        if (projectedCompleted < totalSteps) {
             return;
         }
 
