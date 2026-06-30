@@ -25,6 +25,8 @@ import { FirebaseModule } from './modules/firebase/firebase.module';
 import { MentoringSessionsModule } from './modules/mentoring-sessions/mentoring-sessions.module';
 import { VoiceNotesModule } from './modules/voice-notes/voice-notes.module';
 import { CertificatesModule } from './modules/certificates/certificates.module';
+import { MentorModule } from './modules/mentor/mentor.module';
+import { ReviewCenterCacheModule } from './modules/review-center-cache/review-center-cache.module';
 
 @Module({
   imports: [
@@ -75,6 +77,8 @@ import { CertificatesModule } from './modules/certificates/certificates.module';
     MentoringSessionsModule,
     VoiceNotesModule,
     CertificatesModule,
+    ReviewCenterCacheModule,
+    MentorModule,
   ],
 
   controllers: [],

@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { ReviewCenterCacheService } from '../review-center-cache/review-center-cache.service';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { RoadMap, RoadMapDocument } from './schemas/roadmap.schema';
@@ -124,6 +125,7 @@ export class RoadMapsService {
         private readonly appointmentService: AppointmentsService,
         private readonly mailer: MailerService,
         private readonly configService: ConfigService,
+        private readonly reviewCenterCache: ReviewCenterCacheService,
     ) { }
 
     /** Hours after Jumpstart completion before Session 1 may start (`JUMPSTART_MIN_NOTICE_HOURS`, default 2). */
@@ -1416,6 +1418,9 @@ export class RoadMapsService {
             throw err;
         }
 
+        // Roadmap submission changed → drop any cached Review Center payload for this pastor's mentor(s).
+        this.reviewCenterCache.invalidateForPastor(userIdString);
+
         // Update progress by exact count of extras being saved
         if (newExtras.length > 0) {
             const userIdFlexibleQuery = {
@@ -1531,6 +1536,9 @@ export class RoadMapsService {
         if (!updatedExtras) {
             throw new NotFoundException(`Extras not found for user ${userId} and roadmap ${roadMapId}`);
         }
+
+        // Roadmap resubmission/extra changed → invalidate cached Review Center payload.
+        this.reviewCenterCache.invalidateForPastor(userIdString);
 
         if (newItemsCount > 0) {
             const userIdFlexibleQuery = {

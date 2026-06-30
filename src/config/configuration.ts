@@ -68,6 +68,13 @@ export default () => ({
         minNoticeHours: parseFloat(process.env.JUMPSTART_MIN_NOTICE_HOURS ?? '2'),
     },
 
+    /** Mentor Review Center aggregated endpoint tuning. Set cacheTtlMs=0 to disable caching. */
+    reviewCenter: {
+        cacheTtlMs: parseInt(process.env.REVIEW_CENTER_CACHE_TTL_MS ?? '300000', 10),
+        maxRoadmapsPerMentee: parseInt(process.env.REVIEW_CENTER_MAX_ROADMAPS_PER_MENTEE ?? '6', 10),
+        maxAssessmentsPerMentee: parseInt(process.env.REVIEW_CENTER_MAX_ASSESSMENTS_PER_MENTEE ?? '5', 10),
+    },
+
     googleCalendarOAuth: {
         successRedirectUrl:
             process.env.GOOGLE_OAUTH_SUCCESS_REDIRECT?.trim() ||

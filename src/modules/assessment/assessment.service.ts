@@ -27,6 +27,7 @@ import { ROLES } from '../../common/constants/roles.constants';
 import { assessmentSectionRecommendationNotification } from '../../common/utils/notification-copy.util';
 import { RoadmapAssessmentCompletionService } from '../roadmaps/roadmap-assessment-completion.service';
 import { ProgressService } from '../progress/progress.service';
+import { ReviewCenterCacheService } from '../review-center-cache/review-center-cache.service';
 
 @Injectable()
 export class AssessmentService {
@@ -48,6 +49,7 @@ export class AssessmentService {
     private readonly mailer: MailerService,
     private readonly roadmapAssessmentCompletionService: RoadmapAssessmentCompletionService,
     private readonly progressService: ProgressService,
+    private readonly reviewCenterCache: ReviewCenterCacheService,
   ) { }
 
   private isPastoralLearnerRole(role?: string): boolean {
@@ -733,6 +735,9 @@ export class AssessmentService {
       { new: true, upsert: true }
     ).lean().exec();
 
+    // Assessment pre-survey submitted → invalidate cached Review Center payload.
+    this.reviewCenterCache.invalidateForPastor(userId);
+
     return updated;
   }
 
@@ -878,6 +883,9 @@ export class AssessmentService {
         `Assessment roadmap status sync failed for user ${userId}, assessment ${assessmentId}: ${err instanceof Error ? err.message : err}`,
       );
     }
+
+    // Assessment answers submitted → invalidate cached Review Center payload.
+    this.reviewCenterCache.invalidateForPastor(userId);
 
     return updated;
   }
@@ -1067,6 +1075,9 @@ export class AssessmentService {
         "Recommendation already sent or section not found"
       );
     }
+
+    // Mentor review state changed → invalidate cached Review Center payload.
+    this.reviewCenterCache.invalidateForPastor(userId);
 
     const assessmentLean = await this.assessmentModel
       .findById(assessmentId)
