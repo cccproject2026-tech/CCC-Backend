@@ -1,4 +1,5 @@
 import { Controller, Get, Param, Patch, Post, Body, Delete, Query } from '@nestjs/common';
+import { ApiTags } from '@nestjs/swagger';
 import { ProgressService } from './progress.service';
 import { Types } from 'mongoose';
 import {
@@ -20,6 +21,7 @@ import {
 import { BaseResponse } from '../../shared/interfaces/base-response.interface';
 import { ParseMongoIdPipe } from 'src/common/pipes/parse-mongo-id.pipe';
 
+@ApiTags('Progress')
 @Controller('progress')
 export class ProgressController {
     constructor(private readonly progressService: ProgressService) { }

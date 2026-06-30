@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Param, Patch, Post } from '@nestjs/common';
+import { ApiTags } from '@nestjs/swagger';
 import { MentoringSessionsService } from './mentoring-sessions.service';
 import { BaseResponse } from 'src/shared/interfaces/base-response.interface';
 import { ParseMongoIdPipe } from 'src/common/pipes/parse-mongo-id.pipe';
@@ -8,6 +9,7 @@ import {
     PastorRescheduleRequestDto,
 } from './dto/mentoring-sessions.dto';
 
+@ApiTags('Mentoring Sessions')
 @Controller('mentoring-sessions')
 export class MentoringSessionsController {
     constructor(private readonly mentoringSessionsService: MentoringSessionsService) {}

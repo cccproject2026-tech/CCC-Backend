@@ -8,18 +8,22 @@ import {
     MaxLength,
     Min,
 } from 'class-validator';
+import { ApiPropertyOptional } from '@nestjs/swagger';
 import { VOICE_NOTE_SOURCES } from '../interfaces/voice-note-status.interface';
 
 export class CreateVoiceNoteDto {
+    @ApiPropertyOptional()
     @IsOptional()
     @IsString()
     @MaxLength(200)
     title?: string;
 
+    @ApiPropertyOptional()
     @IsOptional()
     @IsIn(VOICE_NOTE_SOURCES)
     source?: (typeof VOICE_NOTE_SOURCES)[number];
 
+    @ApiPropertyOptional()
     @IsOptional()
     @Transform(({ value }) => {
         if (value === undefined || value === null || value === '') {
@@ -33,11 +37,13 @@ export class CreateVoiceNoteDto {
     @Max(86400)
     recordingDurationSeconds?: number;
 
+    @ApiPropertyOptional()
     @IsOptional()
     @IsString()
     @MaxLength(100)
     recordingDeviceType?: string;
 
+    @ApiPropertyOptional()
     @IsOptional()
     @IsString()
     @MaxLength(50)

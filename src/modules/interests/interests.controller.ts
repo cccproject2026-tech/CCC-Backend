@@ -1,4 +1,5 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { ApiTags } from '@nestjs/swagger';
 import { InterestService } from './interests.service';
 import { CreateInterestDto, UpdateInterestDto } from './dto/create-interest.dto';
 import { BaseResponse } from '../../shared/interfaces/base-response.interface';
@@ -14,6 +15,7 @@ import {
     DynamicFieldsConfigResponseDto,
 } from './dto/interest-form-fields.dto';
 
+@ApiTags('Interests')
 @Controller('interests')
 export class InterestController {
     constructor(

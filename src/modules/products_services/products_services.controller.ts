@@ -8,6 +8,7 @@ import {
     Param,
     Query,
 } from '@nestjs/common';
+import { ApiTags } from '@nestjs/swagger';
 import { ProductsServicesService } from './products_services.service';
 import { CreateScholarshipDto } from './dto/create-scholarship.dto';
 import { UpdateScholarshipDto } from './dto/update-scholarship.dto';
@@ -15,6 +16,7 @@ import { ScholarshipResponseDto } from './dto/scholarship-response.dto';
 import { AwardedUserDto } from './dto/awarded-item.dto';
 import { BaseResponse } from '../../shared/interfaces/base-response.interface';
 
+@ApiTags('Scholarships')
 @Controller('scholarships')
 export class ProductsServicesController {
     constructor(

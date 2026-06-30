@@ -12,6 +12,7 @@ import {
     UploadedFiles,
     // UseGuards,
 } from '@nestjs/common';
+import { ApiTags } from '@nestjs/swagger';
 import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
 import { RoadMapsService } from './roadmaps.service';
 import { BaseResponse } from 'src/shared/interfaces/base-response.interface';
@@ -42,6 +43,7 @@ import { ParseMongoIdPipe } from 'src/common/pipes/parse-mongo-id.pipe';
 // import { Roles } from '../../common/decorators/roles.decorator';
 // import { ROLES } from '../../common/constants/roles.constants';
 
+@ApiTags('Roadmaps')
 @Controller('roadmaps')
 // @UseGuards(JwtAuthGuard, RolesGuard)
 export class RoadMapsController {

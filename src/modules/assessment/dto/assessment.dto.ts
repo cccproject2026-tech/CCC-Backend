@@ -8,6 +8,7 @@ import {
   IsString,
   ValidateNested,
 } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { VALID_ASSESSMENT_TYPES } from '../../../common/constants/status.constants';
 import { Transform, Type } from 'class-transformer';
 import { Types } from 'mongoose';
@@ -19,6 +20,7 @@ const assessmentTypeFromBody = ({ obj, value }: { obj?: Record<string, unknown>;
 };
 
 export class ChoiceDto {
+  @ApiProperty()
   @IsString()
   @IsNotEmpty()
   text: string;
@@ -26,9 +28,11 @@ export class ChoiceDto {
 
 export class RecommendationLevelDto {
 
+  @ApiProperty()
   @IsNotEmpty()
   level: number;
 
+  @ApiProperty()
   @IsArray()
   @IsString({ each: true })
   items: string[];
@@ -36,28 +40,34 @@ export class RecommendationLevelDto {
 }
 
 export class LayerDto {
+  @ApiProperty()
   @IsString()
   @IsNotEmpty()
   title: string;
 
+  @ApiPropertyOptional()
   @IsArray()
   @IsOptional()
   choices?: ChoiceDto[];
 }
 
 export class PreSurveyQuestionDto {
+  @ApiProperty()
   @IsString()
   @IsNotEmpty()
   text: string;
 
+  @ApiProperty()
   @IsString()
   @IsIn(['text', 'number', 'date', 'select'])
   type: string;
 
+  @ApiPropertyOptional()
   @IsOptional()
   @IsString()
   placeholder?: string;
 
+  @ApiProperty()
   @Transform(({ value }) => {
     if (value === true || value === 'true') return true;
     if (value === false || value === 'false') return false;
@@ -68,19 +78,23 @@ export class PreSurveyQuestionDto {
 }
 
 export class SectionDto {
+  @ApiProperty()
   @IsString()
   @IsNotEmpty()
   title: string;
 
+  @ApiProperty()
   @IsString()
   @IsNotEmpty()
   description: string;
 
+  @ApiProperty()
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => LayerDto)
   layers: LayerDto[];
 
+  @ApiProperty()
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => RecommendationLevelDto)
@@ -88,53 +102,65 @@ export class SectionDto {
 }
 
 export class CreateAssessmentDto {
+  @ApiProperty()
   @IsString()
   @IsNotEmpty()
   name: string;
 
+  @ApiProperty()
   @IsString()
   @IsNotEmpty()
   description: string;
 
+  @ApiPropertyOptional()
   @IsArray()
   @IsOptional()
   instructions?: string[];
 
+  @ApiPropertyOptional()
   @IsString()
   @IsOptional()
   bannerImage?: string;
 
+  @ApiPropertyOptional()
   @IsString()
   @IsOptional()
   roadmapId: string;
 
+  @ApiProperty()
   @IsString()
   @IsIn(VALID_ASSESSMENT_TYPES)
   type: string;
 
+  @ApiPropertyOptional()
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => PreSurveyQuestionDto)
   @IsOptional()
   preSurvey?: PreSurveyQuestionDto[];
 
+  @ApiProperty()
   @IsArray()
   sections: SectionDto[];
 }
 
 export class UpdateAssessmentDto {
+  @ApiPropertyOptional()
   @IsOptional()
   @IsString()
   name?: string;
 
+  @ApiPropertyOptional()
   @IsOptional()
   @IsString()
   description?: string;
 
+  @ApiPropertyOptional()
   @IsOptional()
   @IsArray()
   instructions?: string[];
 
+  @ApiPropertyOptional()
   @IsOptional()
   @Transform(assessmentTypeFromBody)
   @IsString()
@@ -142,6 +168,7 @@ export class UpdateAssessmentDto {
   type?: string;
 
   /** Legacy alias; prefer `type`. */
+  @ApiPropertyOptional()
   @IsOptional()
   @Transform(({ obj, value }) => {
     const raw = value ?? obj?.assessmentType ?? obj?.type;
@@ -152,12 +179,14 @@ export class UpdateAssessmentDto {
   assessmentType?: string;
 
   /** Replaces the full pre-survey question list. Send `[]` to clear when pre-survey is disabled. */
+  @ApiPropertyOptional()
   @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => PreSurveyQuestionDto)
   preSurvey?: PreSurveyQuestionDto[];
 
+  @ApiPropertyOptional()
   @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
@@ -167,9 +196,11 @@ export class UpdateAssessmentDto {
 
 export class SectionRecommendationDto {
 
+  @ApiProperty()
   @IsString()
   sectionTitle: string;
 
+  @ApiProperty()
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => RecommendationLevelDto)
@@ -179,18 +210,24 @@ export class SectionRecommendationDto {
 
 export class AssignAssessmentDto {
 
+  @ApiProperty()
   assessmentId: Types.ObjectId;
+  @ApiProperty()
   userIds: Types.ObjectId[];
+  @ApiProperty()
   assignedBy: Types.ObjectId;
+  @ApiPropertyOptional()
   dueDate?: Date;
 
 }
 
 export class SendSectionRecommendationsDto {
 
+  @ApiProperty()
   @IsMongoId()
   userId: string;
 
+  @ApiProperty()
   @IsArray()
   sections: {
     sectionId: string;
@@ -201,12 +238,15 @@ export class SendSectionRecommendationsDto {
 
 export class SectionRecommendationRuleDto {
 
+  @ApiProperty()
   @IsMongoId()
   sectionId: string;
 
+  @ApiProperty()
   @IsString()
   sectionTitle: string;
 
+  @ApiProperty()
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => RecommendationLevelDto)
@@ -216,14 +256,18 @@ export class SectionRecommendationRuleDto {
 
 export class SectionRecommendationPreviewDto {
 
+  @ApiProperty()
   @IsMongoId()
   sectionId: string;
 
+  @ApiProperty()
   @IsString()
   sectionTitle: string;
 
+  @ApiProperty()
   score: number;
 
+  @ApiProperty()
   @IsArray()
   @IsString({ each: true })
   recommendations: string[];

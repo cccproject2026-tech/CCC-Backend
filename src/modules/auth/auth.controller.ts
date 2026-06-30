@@ -11,6 +11,7 @@ import {
     Logger,
     Res,
 } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
 import type { Request, Response } from 'express';
 import { AuthService } from './auth.service';
@@ -33,6 +34,7 @@ import {
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { BaseResponse } from 'src/shared/interfaces/base-response.interface';
 
+@ApiTags('Auth')
 @Controller('auth')
 export class AuthController {
     private readonly logger = new Logger(AuthController.name);
@@ -140,6 +142,7 @@ export class AuthController {
         };
     }
 
+    @ApiBearerAuth('access-token')
     @UseGuards(JwtAuthGuard)
     @Post('logout')
     async logout(@Req() req: any): Promise<BaseResponse<null>> {
@@ -161,6 +164,7 @@ export class AuthController {
      * - `platform=mobile` — `GOOGLE_OAUTH_MOBILE_SUCCESS_REDIRECT`
      * - `redirectTo=<url>` — explicit allowlisted return URL (stored in signed `state`)
      */
+    @ApiBearerAuth('access-token')
     @UseGuards(JwtAuthGuard)
     @Get('google')
     getGoogleAuthUrl(

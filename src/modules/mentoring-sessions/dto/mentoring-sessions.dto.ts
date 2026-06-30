@@ -1,4 +1,5 @@
 import { IsMongoId, IsOptional, IsString } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 /** Public user snippet shared across mentoring session payloads */
 export interface MentoringUserPreview {
@@ -72,28 +73,34 @@ export interface DirectorPastorJourneyDto {
 
 /** Pastor requests mentor reschedule (`sessionId` = appointment `_id`; must match mentoring journey extras). */
 export class PastorRescheduleRequestDto {
+    @ApiPropertyOptional()
     @IsOptional()
     @IsString()
     reason?: string;
 
     /** Must match the appointment’s `userId` when unauthenticated callers pass it explicitly. */
+    @ApiProperty()
     @IsMongoId()
     pastorId!: string;
 }
 
 /** Mentor assigns a new time (same semantics as appointments reschedule). */
 export class MentorRescheduleDto {
+    @ApiProperty()
     @IsMongoId()
     mentorId!: string;
 
+    @ApiProperty()
     @IsString()
     newMeetingDate!: string;
 }
 
 export class MentorSessionActionDto {
+    @ApiProperty()
     @IsMongoId()
     mentorId!: string;
 
+    @ApiPropertyOptional()
     @IsOptional()
     @IsString()
     reason?: string;

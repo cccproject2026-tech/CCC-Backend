@@ -12,6 +12,7 @@ import {
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
+import { ApiTags } from '@nestjs/swagger';
 import { BaseResponse } from 'src/shared/interfaces/base-response.interface';
 import { HomeService } from './home.service';
 import { HomeResponseDto } from './dto/home-response.dto';
@@ -27,6 +28,7 @@ import { ParseMongoIdPipe } from '../../common/pipes/parse-mongo-id.pipe';
 import { CreateMediaDto, UpdateMediaDto } from './dto/media.dto';
 import { FilesInterceptor } from '@nestjs/platform-express';
 
+@ApiTags('Home')
 @Controller('home')
 // @UseGuards(JwtAuthGuard, RolesGuard)
 export class HomeController {

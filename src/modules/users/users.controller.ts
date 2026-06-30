@@ -9,6 +9,7 @@ import {
   Query,
   // UseGuards,
 } from '@nestjs/common';
+import { ApiTags } from '@nestjs/swagger';
 import { UsersService } from './users.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
@@ -29,6 +30,7 @@ import { UploadedFile, UseInterceptors } from '@nestjs/common';
 import { DeleteDocumentDto, UserDocumentResponseDto } from './dto/upload-document.dto';
 import { CreateNoteDto, NoteResponseDto, UpdateNoteDto } from './dto/notes.dto';
 
+@ApiTags('Users')
 @Controller('users')
 // @UseGuards(JwtAuthGuard, RolesGuard)
 export class UsersController {

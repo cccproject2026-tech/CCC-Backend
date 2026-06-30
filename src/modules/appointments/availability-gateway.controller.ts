@@ -1,4 +1,5 @@
 import { Controller, Get, Param, Query } from '@nestjs/common';
+import { ApiTags } from '@nestjs/swagger';
 import { AppointmentsService } from './appointments.service';
 import { BaseResponse } from 'src/shared/interfaces/base-response.interface';
 import { ParseMongoIdPipe } from 'src/common/pipes/parse-mongo-id.pipe';
@@ -8,6 +9,7 @@ import { ParseMongoIdPipe } from 'src/common/pipes/parse-mongo-id.pipe';
  * Omit query `participantUserId` when only the Mentor’s calendar should block slots (e.g. Director → Mentor UX).
  * Hosts still edit weekly windows via `POST/PATCH /appointments/availability/...`.
  */
+@ApiTags('Availability')
 @Controller('availability')
 export class AvailabilityGatewayController {
     constructor(private readonly appointmentsService: AppointmentsService) {}

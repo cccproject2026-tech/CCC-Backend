@@ -1,4 +1,5 @@
 import { Controller, Post, Body, Get, Param, Patch, Query, HttpCode, Headers, Logger, Req, BadRequestException, Delete, Put, Inject, forwardRef, UseInterceptors, UploadedFile } from '@nestjs/common';
+import { ApiTags } from '@nestjs/swagger';
 import { AppointmentsService } from './appointments.service';
 import { CreateAppointmentDto, AppointmentResponseDto, UpdateAppointmentDto, CancelAppointmentDto, MarkMissedAppointmentDto, RecordSessionJoinDto, TranscriptSummaryResponseDto, UpdateAppointmentSessionModeDto } from './dto/appointment.dto';
 import { BaseResponse } from 'src/shared/interfaces/base-response.interface';
@@ -18,6 +19,7 @@ import { MentoringSessionsService } from '../mentoring-sessions/mentoring-sessio
 import { PastorRescheduleRequestDto } from '../mentoring-sessions/dto/mentoring-sessions.dto';
 import { FileInterceptor } from '@nestjs/platform-express';
 
+@ApiTags('Appointments')
 @Controller('appointments')
 export class AppointmentsController {
     private readonly logger = new Logger(AppointmentsController.name);

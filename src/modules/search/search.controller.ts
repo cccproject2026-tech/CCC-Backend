@@ -1,4 +1,5 @@
 import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { ApiTags } from '@nestjs/swagger';
 import { SearchService } from './search.service';
 import { SearchQueryDto } from './dto/search-query.dto';
 import { SearchResponseDto } from './dto/search-response.dto';
@@ -8,6 +9,7 @@ import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ROLES } from '../../common/constants/roles.constants';
 
+@ApiTags('Search')
 @Controller('search')
 // @UseGuards(JwtAuthGuard, RolesGuard)
 export class SearchController {

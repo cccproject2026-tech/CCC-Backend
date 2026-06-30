@@ -6,6 +6,7 @@ import { ConfigService } from '@nestjs/config';
 import helmet from 'helmet';
 import compression from 'compression';
 import { HttpExceptionFilter } from './common/filters';
+import { setupSwagger, SWAGGER_PATH } from './swagger/swagger.config';
 
 /** JSON payloads include base64 digital signatures from roadmap forms. */
 const REQUEST_BODY_LIMIT = '10mb';
@@ -103,8 +104,10 @@ async function bootstrap() {
 
   //API PREFIX/VERSIONING
   app.setGlobalPrefix('api/v1', {
-    exclude: ['/', '/health', '/metrics'],
+    exclude: ['/', '/health', '/metrics', `/${SWAGGER_PATH}`, '/openapi.json'],
   });
+
+  setupSwagger(app);
 
   // GRACEFUL SHUTDOWN
   app.enableShutdownHooks();
@@ -132,6 +135,7 @@ async function bootstrap() {
   logger.log(`Server running on: http://localhost:${port}`);
   logger.log(`API Base URL: http://localhost:${port}/api/v1`);
   logger.log(`Health Check: http://localhost:${port}/health`);
+  logger.log(`API Docs: http://localhost:${port}/${SWAGGER_PATH}`);
   logger.log(
     `Google OAuth env: redirect_uri=${googleRedirectUri || '<missing>'}, client_id_present=${Boolean(
       googleClientId?.trim(),

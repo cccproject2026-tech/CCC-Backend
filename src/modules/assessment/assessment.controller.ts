@@ -15,6 +15,7 @@ import {
   Req,
   // UseGuards,
 } from '@nestjs/common';
+import { ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { CreateAssessmentDto, SectionDto, UpdateAssessmentDto } from './dto/assessment.dto';
 import { Assessment } from './schemas/assessment.schema';
@@ -27,6 +28,7 @@ import { SubmitSectionAnswersDto } from './dto/submit-section-answers.dto';
 import { SubmitPreSurveyDto, UpdatePreSurveyDto } from './dto/submit-pre-survey.dto';
 import { FileInterceptor } from '@nestjs/platform-express';
 
+@ApiTags('Assessment')
 @Controller('assessment')
 // @UseGuards(JwtAuthGuard, RolesGuard)
 export class AssessmentController {

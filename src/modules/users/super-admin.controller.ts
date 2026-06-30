@@ -9,6 +9,7 @@ import {
     Query,
     UseGuards,
 } from '@nestjs/common';
+import { ApiTags } from '@nestjs/swagger';
 import { UsersService } from './users.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -20,6 +21,7 @@ import { UserResponseDto } from './dto/user-response.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { InterestService } from '../interests/interests.service';
 
+@ApiTags('Super Admin')
 @Controller('super-admin')
 // @UseGuards(JwtAuthGuard, RolesGuard)
 // @Roles(ROLES.SUPER_ADMIN)

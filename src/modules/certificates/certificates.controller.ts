@@ -1,9 +1,11 @@
 import { Body, Controller, Get, Param, Post } from '@nestjs/common';
+import { ApiTags } from '@nestjs/swagger';
 import { BaseResponse } from 'src/shared/interfaces/base-response.interface';
 import { ParseMongoIdPipe } from 'src/common/pipes/parse-mongo-id.pipe';
 import { CertificateResponseDto, IssueCertificateRequestDto } from './dto/certificate.dto';
 import { CertificatesService } from './certificates.service';
 
+@ApiTags('Certificates')
 @Controller('certificates')
 export class CertificatesController {
     constructor(private readonly certificatesService: CertificatesService) {}

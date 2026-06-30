@@ -10,6 +10,7 @@ import {
   UseInterceptors,
   // UseGuards,
 } from '@nestjs/common';
+import { ApiTags } from '@nestjs/swagger';
 import { MicroGrantService } from './micro-grant.service';
 import {
   ApplyMicroGrantDto,
@@ -22,6 +23,7 @@ import {
 import { ParseMongoIdPipe } from '../../common/pipes/parse-mongo-id.pipe';
 import { FilesInterceptor } from '@nestjs/platform-express';
 
+@ApiTags('Micro Grant')
 @Controller('microgrant')
 // @UseGuards(JwtAuthGuard, RolesGuard)
 export class MicroGrantController {
