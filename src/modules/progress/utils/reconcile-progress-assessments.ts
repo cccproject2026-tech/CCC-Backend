@@ -2,7 +2,10 @@ import { Types } from 'mongoose';
 import {
     assessmentProgressNeedsUpdate,
     AnswerSectionSlice,
+    deriveAssessmentProgressFromAnswers,
     isOrphanAssessmentEntry,
+    PROGRESS_STATUSES,
+    resolveAssessmentTotalSections,
 } from './assessment-progress.util';
 
 export type ProgressAssessmentEntry = {
@@ -50,6 +53,37 @@ export function reconcileProgressAssessments(
         const templateSectionCount =
             input.templateSectionCountByAssessmentId.get(id) ?? entry.totalSections ?? 0;
         const answerSections = input.answerSectionsByAssessmentId.get(id);
+        const totalSections = resolveAssessmentTotalSections(
+            templateSectionCount,
+            entry.totalSections,
+        );
+
+        if (answerSections?.length) {
+            const derived = deriveAssessmentProgressFromAnswers(
+                answerSections,
+                totalSections,
+            );
+            const updated = {
+                ...entry,
+                completedSections: derived.completedSections,
+                totalSections,
+                progressPercentage: derived.progressPercentage,
+                status: derived.status,
+            };
+            const entryChanged =
+                updated.completedSections !== (entry.completedSections ?? 0) ||
+                updated.totalSections !== (entry.totalSections ?? 0) ||
+                updated.progressPercentage !== (entry.progressPercentage ?? 0) ||
+                updated.status !== (entry.status ?? PROGRESS_STATUSES.NOT_STARTED);
+
+            if (entryChanged) {
+                updatedAssessmentIds.push(id);
+                changed = true;
+            }
+
+            return updated;
+        }
+
         const next = assessmentProgressNeedsUpdate(
             entry,
             templateSectionCount,

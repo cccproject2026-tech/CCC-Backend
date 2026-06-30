@@ -327,20 +327,12 @@ export class ProgressService {
             answerSectionsByAssessmentId,
         });
 
-        if (!result.changed) {
-            return {
-                changed: false,
-                removedOrphanIds: [],
-                updatedAssessmentIds: [],
-            };
-        }
-
         progress.assessments = result.assessments;
         progress.markModified('assessments');
         await progress.save();
 
         return {
-            changed: true,
+            changed: result.changed,
             removedOrphanIds: result.removedOrphanIds,
             updatedAssessmentIds: result.updatedAssessmentIds,
         };
