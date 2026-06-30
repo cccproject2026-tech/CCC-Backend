@@ -32,6 +32,11 @@ import {
     countCompletedAnswerSections,
 } from './utils/assessment-progress.util';
 import { reconcileProgressAssessments } from './utils/reconcile-progress-assessments';
+import {
+    buildAssessmentProgressEntries,
+    collectAssignedAssessmentIds,
+    findMissingAssessmentIds,
+} from './utils/sync-assigned-assessments.util';
 
 function resolveAssignedRoadmapSteps(totalSteps?: number, extras?: any[], nestedRoadmaps?: any[]): number {
     if (typeof totalSteps === 'number' && totalSteps > 0) {
@@ -88,8 +93,115 @@ export class ProgressService {
             return null;
         }
 
+        await this.syncMissingAssignedAssessments(progress);
         await this.reconcileAndPersistAssessments(progress);
         return toProgressResponseDto(progress);
+    }
+
+    /**
+     * Ensures every assessment assigned to the user (AssessmentAssigned or legacy
+     * embedded assignments) has a row in progress.assessments so overall % includes them.
+     */
+    async syncMissingAssignedAssessments(
+        progress: ProgressDocument,
+    ): Promise<boolean> {
+        const userIdRaw = progress.userId as Types.ObjectId | string;
+        const userObjectId =
+            userIdRaw instanceof Types.ObjectId
+                ? userIdRaw
+                : new Types.ObjectId(String(userIdRaw));
+        const userIdString = userObjectId.toString();
+
+        const [assignedRows, embeddedAssessments] = await Promise.all([
+            this.assessmentAssignedModel
+                .find({ userId: userObjectId }, { assessmentId: 1 })
+                .lean()
+                .exec(),
+            this.assessmentModel
+                .find({ 'assignments.userId': userObjectId }, { _id: 1 })
+                .lean()
+                .exec(),
+        ]);
+
+        const assignedIds = collectAssignedAssessmentIds(
+            assignedRows.map((row) => ({
+                assessmentId: row.assessmentId as Types.ObjectId,
+            })),
+            embeddedAssessments.map((doc) => ({
+                _id: doc._id as Types.ObjectId,
+            })),
+        );
+
+        const existingIds = (progress.assessments ?? []).map((entry) =>
+            entry.assessmentId.toString(),
+        );
+        const missingIds = findMissingAssessmentIds(assignedIds, existingIds);
+
+        if (missingIds.length === 0) {
+            return false;
+        }
+
+        const missingObjectIds = missingIds.map((id) => new Types.ObjectId(id));
+        const [templates, answerDocs] = await Promise.all([
+            this.assessmentModel
+                .find({ _id: { $in: missingObjectIds } }, { sections: 1 })
+                .lean()
+                .exec(),
+            this.userAnswerModel
+                .find(
+                    {
+                        $or: [
+                            { userId: userObjectId },
+                            { userId: userIdString },
+                        ],
+                        assessmentId: { $in: missingObjectIds },
+                    },
+                    { assessmentId: 1, sections: 1 },
+                )
+                .lean()
+                .exec(),
+        ]);
+
+        const newEntries = buildAssessmentProgressEntries(
+            templates.map((template) => ({
+                _id: template._id as Types.ObjectId,
+                sections: template.sections,
+            })),
+            answerDocs.map((doc) => ({
+                assessmentId: doc.assessmentId as Types.ObjectId,
+                sections: doc.sections,
+            })),
+        );
+
+        if (newEntries.length === 0) {
+            return false;
+        }
+
+        progress.assessments = [...(progress.assessments ?? []), ...newEntries];
+        progress.markModified('assessments');
+        await progress.save();
+
+        return true;
+    }
+
+    /** Re-run aggregate fields after partial progress updates that skip Mongoose hooks. */
+    async refreshAggregatesForUser(userId: Types.ObjectId | string): Promise<void> {
+        const userObjectId =
+            typeof userId === 'string' ? new Types.ObjectId(userId) : userId;
+        const userIdString = userObjectId.toString();
+
+        const progress = await this.progressModel
+            .findOne({
+                $or: [{ userId: userObjectId }, { userId: userIdString }],
+            })
+            .exec();
+
+        if (!progress) {
+            return;
+        }
+
+        await this.syncMissingAssignedAssessments(progress);
+        await progress.save();
     }
 
     /**

@@ -1615,6 +1615,16 @@ export class RoadMapsService {
                     }
                 }
             );
+
+            const progressDoc = await this.progressModel.findOne({
+                $or: [
+                    { userId: userObjectId },
+                    { userId: userIdString },
+                ],
+            }).exec();
+            if (progressDoc) {
+                await progressDoc.save();
+            }
         }
 
         if (wasAlreadyCompleted && newItemsCount > 0) {

@@ -27,6 +27,7 @@ import { ROLES } from '../../common/constants/roles.constants';
 import { assessmentSectionRecommendationNotification } from '../../common/utils/notification-copy.util';
 import { RoadmapAssessmentCompletionService } from '../roadmaps/roadmap-assessment-completion.service';
 import { countCompletedAnswerSections } from '../progress/utils/assessment-progress.util';
+import { ProgressService } from '../progress/progress.service';
 
 @Injectable()
 export class AssessmentService {
@@ -47,6 +48,7 @@ export class AssessmentService {
     private readonly notificationService: HomeService,
     private readonly mailer: MailerService,
     private readonly roadmapAssessmentCompletionService: RoadmapAssessmentCompletionService,
+    private readonly progressService: ProgressService,
   ) { }
 
   private isPastoralLearnerRole(role?: string): boolean {
@@ -364,6 +366,10 @@ export class AssessmentService {
           });
         }
       }
+    }
+
+    for (const user of newUsers) {
+      await this.progressService.refreshAggregatesForUser(user._id);
     }
 
     return updated;

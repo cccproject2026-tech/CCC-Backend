@@ -13,6 +13,7 @@ import { HomeModule } from '../home/home.module';
 import { MailerService } from 'src/common/utils/mail.util';
 import { ConfigModule } from '@nestjs/config';
 import { RoadMapsModule } from '../roadmaps/roadmaps.module';
+import { ProgressModule } from '../progress/progress.module';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { RoadMapsModule } from '../roadmaps/roadmaps.module';
     ]),
     HomeModule,
     RoadMapsModule,
+    ProgressModule,
     S3Module,
     MulterModule.register({
       storage: require('multer').memoryStorage(),
